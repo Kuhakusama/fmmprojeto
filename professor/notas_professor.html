@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notas | SME FMM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Importação do Componente de Sidebar -->
+    <script src="../sidebar.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        fmm: {
+                            dark: '#003c5b',
+                            blue: '#00638f',
+                            green: '#80a51b',
+                            lime: '#c8d400',
+                            bg: '#f1f5f9'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; overflow: hidden; }
+        
+        /* Estilos da Sidebar (necessários para o container e animações do JS) */
+        .sidebar-transition { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .sidebar-collapsed .sidebar-text, .sidebar-collapsed .sidebar-category-header, .sidebar-collapsed .chevron-icon, .sidebar-collapsed .sidebar-category-title { display: none; }
+        .sidebar-collapsed .sidebar-item { justify-content: center; padding: 12px 0; }
+        .sidebar-collapsed .logo-full { display: none; }
+        .sidebar-collapsed .logo-short { display: block; }
+        .logo-short { display: none; }
+
+        /* Accordion Menu Styles (Usados pelo JS) */
+        .category-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(0,0,0,0.05);
+        }
+        .category-content.open {
+            max-height: 1000px;
+        }
+        .chevron-icon {
+            transition: transform 0.3s ease;
+        }
+        .rotate-180 {
+            transform: rotate(180deg);
+        }
+
+        .grade-input { 
+            width: 54px; 
+            text-align: center; 
+            border-radius: 10px; 
+            border: 2px solid #e2e8f0; 
+            padding: 6px 2px; 
+            font-weight: 800; 
+            font-size: 13px;
+            transition: all 0.2s;
+            background: white;
+        }
+        .grade-input:focus { border-color: #00638f; outline: none; background: #fff; transform: scale(1.05); z-index: 10; box-shadow: 0 0 0 3px rgba(0, 99, 143, 0.1); }
+        .grade-input:disabled { background: #f8fafc; color: #cbd5e1; cursor: not-allowed; border-color: #f1f5f9; border-style: dashed; }
+        
+        .grade-low { color: #ef4444; border-color: #fecaca; background: #fef2f2; }
+        .grade-ok { color: #00638f; border-color: #e2e8f0; }
+
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            background: #0f172a; 
+        }
+
+        .sticky-col { 
+            position: sticky; 
+            left: 0; 
+            background: white; 
+            z-index: 20; 
+            border-right: 2px solid #cbd5e1;
+        }
+
+        .sticky-intersect {
+            position: sticky;
+            top: 0;
+            left: 0;
+            z-index: 40;
+            background: #0f172a;
+            border-right: 2px solid rgba(255,255,255,0.1);
+        }
+
+        .group:hover .sticky-col { background: #f8fafc; }
+
+        .tab-btn {
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-radius: 12px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #64748b;
+            white-space: nowrap;
+        }
+        .tab-btn.active {
+            background: #003c5b;
+            color: white;
+            box-shadow: 0 4px 10px rgba(0, 60, 91, 0.15);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { height: 10px; width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; border: 3px solid #f1f5f9; }
+
+        .student-photo {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            object-fit: cover;
+            cursor: pointer;
+            transition: transform 0.2s;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .student-photo:hover { transform: scale(1.1); }
+
+        .top-bar-select {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #003c5b;
+            outline: none;
+            transition: all 0.2s;
+            min-width: 140px;
+        }
+        .top-bar-select:focus { border-color: #00638f; background: white; box-shadow: 0 0 0 4px rgba(0, 99, 143, 0.05); }
+
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        .animate-slide { animation: slideInRight 0.4s ease-out forwards; }
+    </style>
+</head>
+<body class="flex h-screen w-screen overflow-hidden">
+
+    <!-- SIDEBAR CONTAINER (Componente injetado via JS) -->
+    <aside id="sidebar-container" class="sidebar-transition w-72 bg-fmm-dark text-white flex-shrink-0 flex flex-col shadow-2xl relative z-20">
+        <!-- Carregado via sidebar.js -->
+    </aside>
+
+    <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        
+        <!-- TOP BAR CONSOLIDADA -->
+        <header class="bg-white h-20 border-b flex items-center justify-between px-8 z-30 shadow-sm flex-shrink-0">
+            <!-- Left: Title & Filters -->
+            <div class="flex items-center gap-6">
+                <div class="flex flex-col">
+                    <h1 class="text-base font-black text-fmm-dark tracking-tight flex items-center gap-2">
+                        <span class="w-1.5 h-4 bg-fmm-lime rounded-full"></span>
+                        Diário
+                    </h1>
+                </div>
+
+                <div class="h-8 w-px bg-slate-100 hidden md:block"></div>
+
+                <div class="flex items-center gap-3">
+                    <select id="selectTurma" onchange="loadGradeTable()" class="top-bar-select">
+                        <option value="">Turma...</option>
+                    </select>
+                    <select id="selectDisc" onchange="loadGradeTable()" class="top-bar-select w-48">
+                        <option value="">Disciplina...</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Center: Tabs -->
+            <div id="period-tabs" class="hidden lg:flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200">
+                <button onclick="switchView('anual')" class="tab-btn active" id="tab-anual">Anual</button>
+                <button onclick="switchView('1_TRIMESTRE')" class="tab-btn" id="tab-1_TRIMESTRE">1º Trim</button>
+                <button onclick="switchView('2_TRIMESTRE')" class="tab-btn" id="tab-2_TRIMESTRE">2º Trim</button>
+                <button onclick="switchView('3_TRIMESTRE')" class="tab-btn" id="tab-3_TRIMESTRE">3º Trim</button>
+            </div>
+
+            <!-- Right: Stats & Sync -->
+            <div class="flex items-center gap-4">
+                <div id="sync-status" class="hidden items-center gap-2 px-3 py-1.5 bg-fmm-blue/5 rounded-full border border-fmm-blue/10 animate-pulse">
+                    <i data-lucide="refresh-ccw" class="w-3.5 h-3.5 text-fmm-blue"></i>
+                    <span class="text-[9px] font-black text-fmm-blue uppercase">Sinc...</span>
+                </div>
+
+                <div class="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100">
+                    <i data-lucide="users" class="w-4 h-4 text-slate-400"></i>
+                    <span id="student-count" class="text-sm font-black text-fmm-dark">00</span>
+                    <span class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Alunos</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ÁREA DA TABELA -->
+        <div class="flex-1 overflow-auto custom-scrollbar bg-slate-50" id="table-scroll-container">
+            
+            <div id="loading-overlay" class="hidden h-full flex flex-col items-center justify-center text-slate-300 gap-4">
+                <i data-lucide="loader-2" class="w-12 h-12 animate-spin text-fmm-blue"></i>
+                <p class="text-sm font-bold uppercase tracking-widest">A carregar matriz...</p>
+            </div>
+
+            <div id="empty-view" class="h-full flex flex-col items-center justify-center p-20">
+                <div class="w-20 h-20 bg-white rounded-full shadow-xl flex items-center justify-center mb-6 border border-slate-100">
+                    <i data-lucide="layers" class="w-10 h-10 text-slate-200"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-400">Selecione os filtros</h3>
+                <p class="text-sm text-slate-300 italic">O diário de notas será exibido aqui.</p>
+            </div>
+
+            <div id="table-wrapper" class="hidden inline-block align-middle min-w-full">
+                <table class="min-w-full border-separate border-spacing-0 text-left" id="notasTable">
+                    <thead id="tableHeader"></thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-100 bg-white"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- MODAL DE ZOOM DA FOTO -->
+    <div id="photoModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4" onclick="closePhotoModal()">
+        <div class="relative animate-fade-in-up" onclick="event.stopPropagation()">
+            <button onclick="closePhotoModal()" class="absolute -top-12 -right-4 text-white hover:text-fmm-lime transition-colors">
+                <i data-lucide="x" class="w-8 h-8"></i>
+            </button>
+            <img id="enlargedPhoto" src="" class="max-w-[90vw] max-h-[80vh] rounded-[40px] shadow-2xl border-4 border-white/10 object-contain">
+            <div id="enlargedName" class="mt-4 text-center text-white font-bold text-lg tracking-tight"></div>
+        </div>
+    </div>
+
+    <!-- TOAST -->
+    <div id="toast" class="fixed bottom-8 right-8 z-50 translate-y-20 opacity-0 transition-all duration-500">
+        <div class="bg-slate-900 text-white px-8 py-5 rounded-2xl shadow-2xl flex items-center gap-4 border border-white/5">
+            <div class="w-8 h-8 bg-fmm-lime/20 rounded-full flex items-center justify-center">
+                <i data-lucide="check" class="w-4 h-4 text-fmm-lime"></i>
+            </div>
+            <span class="text-xs font-bold tracking-tight" id="toast-msg">Sincronizado</span>
+        </div>
+    </div>
+
+    <script>
+        const supabaseUrl = 'https://panxfescmzjdltthreqy.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbnhmZXNjbXpqZGx0dGhyZXF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTA5NDMsImV4cCI6MjA4MjYyNjk0M30.jSZVhw2TFD52zRV4NZUGUeXKBHedWXcdH7w_fXeoGhA';
+        const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+
+        let currentUser = null;
+        let saveTimers = {};
+        let currentView = 'anual'; 
+        let globalMatriculas = [];
+        let globalNotas = [];
+        let globalAnual = [];
+        let currentDiscType = 'BCC';
+        let currentDiscSigla = '';
+
+        function safeSetText(id, text) {
+            const el = document.getElementById(id);
+            if (el) el.innerText = text;
+        }
+
+        function formatDriveUrl(url) {
+            if (!url) return null;
+            if (url.includes('drive.google.com') && url.includes('/file/d/')) {
+                const idMatch = url.match(/\/d\/(.*?)\//);
+                if (idMatch && idMatch[1]) {
+                    return `https://lh3.googleusercontent.com/d/${idMatch[1]}`;
+                }
+            }
+            return url;
+        }
+
+        async function init() {
+            // Inicializar Sidebar Componentizada
+            if(window.SidebarComponent) await SidebarComponent.render('sidebar-container');
+
+            const { data: { user } } = await supabaseClient.auth.getUser();
+            if (!user) return window.location.href = '../index.html';
+            const { data: profile } = await supabaseClient.from('perfis').select('*').eq('id', user.id).single();
+            currentUser = profile;
+            await populateSelectors();
+            lucide.createIcons();
+        }
+
+        // --- STUB PARA TOGGLE SIDEBAR (Para compatibilidade com o botão) ---
+        function toggleSidebar() {
+            if(window.SidebarComponent) SidebarComponent.toggleSidebar();
+        }
+
+        function openPhotoModal(url, name) {
+            const modal = document.getElementById('photoModal');
+            const img = document.getElementById('enlargedPhoto');
+            const nameDiv = document.getElementById('enlargedName');
+            img.src = url;
+            nameDiv.innerText = name;
+            modal.classList.remove('hidden');
+        }
+
+        function closePhotoModal() {
+            document.getElementById('photoModal').classList.add('hidden');
+        }
+
+        async function populateSelectors() {
+            const selectT = document.getElementById('selectTurma');
+            const selectD = document.getElementById('selectDisc');
+            let turmas = [], disciplinas = [];
+
+            if (currentUser.cargo === 'coordenador' || currentUser.cargo === 'diretor') {
+                const { data: t } = await supabaseClient.from('turmas').select('*').order('nome');
+                const { data: d } = await supabaseClient.from('disciplinas').select('*').order('nome');
+                turmas = t || []; disciplinas = d || [];
+            } else {
+                const { data: grade } = await supabaseClient.from('grade_horaria').select('id_turma, turmas(*)').eq('id_professor', currentUser.id);
+                turmas = Array.from(new Map(grade.map(g => [g.id_turma, g.turmas])).values());
+                const { data: vinculos = [] } = await supabaseClient.from('professor_disciplinas').select('sigla_disciplina, disciplinas(*)').eq('id_professor', currentUser.id);
+                disciplinas = vinculos.map(v => v.disciplinas).filter(d => d !== null);
+            }
+            selectT.innerHTML = '<option value="">Turma...</option>' + turmas.map(t => `<option value="${t.id}">${t.nome} (${t.serie})</option>`).join('');
+            selectD.innerHTML = '<option value="">Disciplina...</option>' + disciplinas.map(d => `<option value="${d.sigla}" data-tipo="${d.tipo}">${d.nome} (${d.sigla})</option>`).join('');
+        }
+
+        function switchView(view) {
+            currentView = view;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            const tab = document.getElementById(`tab-${view}`);
+            if(tab) tab.classList.add('active');
+            renderTable();
+        }
+
+        async function loadGradeTable() {
+            const turmaId = document.getElementById('selectTurma').value;
+            const discSelect = document.getElementById('selectDisc');
+            currentDiscSigla = discSelect.value;
+            currentDiscType = discSelect.options[discSelect.selectedIndex]?.dataset.tipo;
+
+            if (!turmaId || !currentDiscSigla) {
+                document.getElementById('table-wrapper').classList.add('hidden');
+                document.getElementById('empty-view').classList.remove('hidden');
+                document.getElementById('period-tabs').classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('empty-view').classList.add('hidden');
+            document.getElementById('loading-overlay').classList.remove('hidden');
+            document.getElementById('table-wrapper').classList.add('hidden');
+            
+            const tabs = document.getElementById('period-tabs');
+            if (tabs) tabs.classList.toggle('hidden', currentDiscType !== 'BCC');
+
+            try {
+                // AGORA BUSCAMOS DA VIEW para leitura (Espelhamento do Banco)
+                if (currentDiscType === 'BCC') {
+                    // Para BCC usamos a view consolidada
+                    const { data: boletimView } = await supabaseClient.from('vw_boletim_basica')
+                        .select('*')
+                        .eq('turma', (document.getElementById('selectTurma').options[document.getElementById('selectTurma').selectedIndex].text.split(' ')[0])) // Filtro por nome da turma (a view usa nome)
+                        .eq('sigla_disciplina', currentDiscSigla)
+                        .order('aluno');
+
+                    // Fallback para matriculas caso a view não retorne nada (ainda sem notas)
+                    if (!boletimView || boletimView.length === 0) {
+                        const { data: matriculas } = await supabaseClient.from('matriculas')
+                            .select('id, ra_aluno, alunos:ra_aluno(nome_completo, url_foto)')
+                            .eq('id_turma', turmaId)
+                            .eq('status', 'CURSANDO')
+                            .eq('ano_letivo', 2026)
+                            .order('ra_aluno'); // Ordenação consistente
+                        globalMatriculas = matriculas || [];
+                        // Inicializa arrays vazios para notas
+                        globalNotas = [];
+                        globalAnual = [];
+                    } else {
+                        // Converter formato da View para formato esperado pelo renderizador (Adapter)
+                        globalMatriculas = boletimView.map(row => ({
+                            id: row.id_matricula,
+                            ra_aluno: row.ra,
+                            alunos: { nome_completo: row.aluno, url_foto: null } // A view não tem foto, precisaria join. Vamos simplificar buscando matricula se necessario ou adaptando
+                        }));
+                        
+                        // REVERTENDO PARA LÓGICA DE MATRÍCULA + TABELAS DE FATO para garantir edição e fotos.
+                        
+                        const { data: matriculas } = await supabaseClient.from('matriculas')
+                            .select('id, ra_aluno, alunos:ra_aluno(nome_completo, url_foto)')
+                            .eq('id_turma', turmaId)
+                            .eq('status', 'CURSANDO')
+                            .eq('ano_letivo', 2026);
+                        globalMatriculas = matriculas || [];
+                        
+                        const { data: nb } = await supabaseClient.from('notas_basica').select('*').eq('sigla_disciplina', currentDiscSigla);
+                        const { data: ab } = await supabaseClient.from('anual_basica').select('*').eq('sigla_disciplina', currentDiscSigla);
+                        globalNotas = nb || []; globalAnual = ab || [];
+                    }
+
+                } else {
+                    // Técnica (sem view ainda)
+                    const { data: matriculas } = await supabaseClient.from('matriculas')
+                        .select('id, ra_aluno, alunos:ra_aluno(nome_completo, url_foto)')
+                        .eq('id_turma', turmaId)
+                        .eq('status', 'CURSANDO')
+                        .eq('ano_letivo', 2026);
+                    globalMatriculas = matriculas || [];
+
+                    const { data: nt } = await supabaseClient.from('notas_tecnica').select('*').eq('sigla_disciplina', currentDiscSigla);
+                    globalNotas = nt || [];
+                }
+
+                // Ordenação Alfabética dos Alunos
+                globalMatriculas.sort((a, b) => a.alunos.nome_completo.localeCompare(b.alunos.nome_completo));
+                safeSetText('student-count', globalMatriculas.length.toString().padStart(2, '0'));
+
+                renderTable();
+                document.getElementById('table-wrapper').classList.remove('hidden');
+            } catch (err) {
+                console.error("Erro Supabase:", err);
+            } finally {
+                document.getElementById('loading-overlay').classList.add('hidden');
+                lucide.createIcons();
+            }
+        }
+
+        function renderTable() {
+            const header = document.getElementById('tableHeader');
+            const body = document.getElementById('tableBody');
+            if (!header || !body) return;
+
+            if (currentDiscType === 'BCC') renderBCC(header, body);
+            else renderTecnica(header, body);
+        }
+
+        function renderBCC(header, body) {
+            let headHTML = `<tr>
+                <th class="px-8 py-6 sticky-intersect border-r border-white/5 min-w-[300px] text-white text-[10px] font-black uppercase tracking-widest">Aluno</th>`;
+            
+            if (currentView === 'anual') {
+                headHTML += `<th class="text-center py-6 sticky-header bg-slate-800 text-white text-[10px] font-black uppercase">1º Trim</th>
+                             <th class="text-center py-6 sticky-header bg-slate-700 text-white text-[10px] font-black uppercase">2º Trim</th>
+                             <th class="text-center py-6 sticky-header bg-slate-800 text-white text-[10px] font-black uppercase">3º Trim</th>
+                             <th class="text-center py-6 sticky-header bg-fmm-blue text-white text-[10px] font-black uppercase">M. Anual</th>
+                             <th class="text-center py-6 sticky-header bg-fmm-blue text-white text-[10px] font-black uppercase">R. Final</th>
+                             <th class="text-center py-6 sticky-header bg-fmm-blue text-white text-[10px] font-black uppercase border-r border-white/10">Conselho</th>
+                             <th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">M. Final</th></tr>`;
+            } else {
+                headHTML += `<th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">Prova 1 (P1)</th>
+                             <th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">Prova 2 (P2)</th>
+                             <th class="text-center py-6 sticky-header bg-slate-800 text-white text-[10px] font-black uppercase">M. Parcial</th>
+                             <th class="text-center py-6 sticky-header bg-orange-600 text-white text-[10px] font-black uppercase">Recup (RT)</th>
+                             <th class="text-center py-6 sticky-header bg-fmm-lime text-fmm-dark text-[10px] font-black uppercase">Nota Final</th></tr>`;
+            }
+            header.innerHTML = headHTML;
+
+            body.innerHTML = globalMatriculas.map(m => {
+                const n = globalNotas.find(x => x.id_matricula === m.id && x.periodo === currentView) || { p1: 0, p2: 0, rt: 0, nt: 0 };
+                const a = globalAnual.find(x => x.id_matricula === m.id) || { media_anual: 0, recup_final: 0, conselho_classe: 0, media_final: 0 };
+                const n1 = globalNotas.find(x => x.id_matricula === m.id && x.periodo === '1_TRIMESTRE')?.nt || 0;
+                const n2 = globalNotas.find(x => x.id_matricula === m.id && x.periodo === '2_TRIMESTRE')?.nt || 0;
+                const n3 = globalNotas.find(x => x.id_matricula === m.id && x.periodo === '3_TRIMESTRE')?.nt || 0;
+
+                const urlFoto = m.alunos?.url_foto;
+                const formattedUrl = formatDriveUrl(urlFoto);
+                const avatar = urlFoto 
+                    ? `<img src="${formattedUrl}" class="student-photo" onclick="openPhotoModal('${formattedUrl}', '${m.alunos?.nome_completo}')" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(m.alunos?.nome_completo)}&background=random&color=fff'">`
+                    : `<div class="student-photo flex items-center justify-center bg-slate-100 text-slate-400 font-bold text-xs border-2 border-white shadow-sm">${m.alunos?.nome_completo.charAt(0)}</div>`;
+
+                let rows = `<tr class="group">
+                    <td class="px-8 py-5 font-bold text-fmm-dark sticky-col border-r border-slate-100">
+                        <div class="flex items-center gap-4">
+                            ${avatar}
+                            <div class="flex flex-col">
+                                <span class="text-sm font-extrabold truncate max-w-[180px]">${m.alunos?.nome_completo || 'N/A'}</span>
+                                <span class="text-[10px] text-slate-400 font-bold uppercase">RA: ${m.ra_aluno}</span>
+                            </div>
+                        </div>
+                    </td>`;
+
+                if (currentView === 'anual') {
+                    rows += `<td class="px-4 text-center font-bold ${n1 < 6 ? 'text-red-500' : 'text-slate-600'}">${Number(n1).toFixed(1)}</td>
+                             <td class="px-4 text-center font-bold ${n2 < 6 ? 'text-red-500' : 'text-slate-600'}">${Number(n2).toFixed(1)}</td>
+                             <td class="px-4 text-center font-bold ${n3 < 6 ? 'text-red-500' : 'text-slate-600'}">${Number(n3).toFixed(1)}</td>
+                             <td class="px-4 text-center font-black text-fmm-blue bg-blue-50/30">${Number(a.media_anual).toFixed(1)}</td>
+                             <td class="px-4 text-center">${renderAnualInput(m.id, 'recup_final', a.recup_final, a.media_anual >= 6)}</td>
+                             <td class="px-4 text-center border-r border-slate-100">${renderAnualInput(m.id, 'conselho_classe', a.conselho_classe)}</td>
+                             <td class="px-6 text-center font-black text-base ${a.media_final < 6 ? 'text-red-600' : 'text-fmm-green'}">${Number(a.media_final).toFixed(1)}</td>`;
+                } else {
+                    const mp = (Number(n.p1 || 0) + Number(n.p2 || 0)) / 2;
+                    rows += `<td class="px-4 text-center">${renderInput(m.id, currentView, 'p1', n.p1)}</td>
+                             <td class="px-4 text-center">${renderInput(m.id, currentView, 'p2', n.p2)}</td>
+                             <td class="px-4 text-center font-bold bg-slate-50 text-slate-400">${mp.toFixed(1)}</td>
+                             <td class="px-4 text-center">${renderInput(m.id, currentView, 'rt', n.rt, mp >= 6)}</td>
+                             <td class="px-6 text-center font-black text-base ${n.nt < 6 ? 'text-red-600' : 'text-fmm-blue'}">${Number(n.nt || 0).toFixed(1)}</td>`;
+                }
+                return rows + '</tr>';
+            }).join('');
+        }
+
+        function renderTecnica(header, body) {
+            header.innerHTML = `<tr>
+                <th class="px-8 py-6 sticky-intersect border-r border-white/5 min-w-[300px] text-white text-[10px] font-black uppercase tracking-widest">Aluno</th>
+                <th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">P1</th>
+                <th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">P2</th>
+                <th class="text-center py-6 sticky-header bg-slate-800 text-white text-[10px] font-black uppercase">M1</th>
+                <th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">Rec. P.</th>
+                <th class="text-center py-6 sticky-header bg-slate-800 text-white text-[10px] font-black uppercase">Cons.</th>
+                <th class="text-center py-6 sticky-header bg-slate-700 text-white text-[10px] font-black uppercase">M2</th>
+                <th class="text-center py-6 sticky-header text-white text-[10px] font-black uppercase">Rec. F.</th>
+                <th class="text-center py-6 sticky-header bg-fmm-green text-white text-[10px] font-black uppercase tracking-widest">N.F.P</th></tr>`;
+
+            body.innerHTML = globalMatriculas.map(m => {
+                const n = globalNotas.find(x => x.id_matricula === m.id) || { p1: 0, p2: 0, media_1: 0, recup_parcial: 0, conselho_semestral: 0, media_2: 0, recup_final_semestral: 0, nota_final_periodo: 0 };
+                
+                const formattedUrl = formatDriveUrl(m.alunos?.url_foto);
+                const avatar = m.alunos?.url_foto 
+                    ? `<img src="${formattedUrl}" class="student-photo" onclick="openPhotoModal('${formattedUrl}', '${m.alunos?.nome_completo}')" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(m.alunos?.nome_completo)}&background=random&color=fff'">`
+                    : `<div class="student-photo flex items-center justify-center bg-slate-100 text-slate-400 font-bold text-xs border-2 border-white shadow-sm">${m.alunos?.nome_completo.charAt(0)}</div>`;
+
+                return `<tr class="group">
+                    <td class="px-8 py-5 font-bold text-fmm-dark sticky-col border-r border-slate-100">
+                        <div class="flex items-center gap-4">
+                            ${avatar}
+                            <div class="flex flex-col">
+                                <span class="text-sm font-extrabold truncate max-w-[180px]">${m.alunos?.nome_completo || 'N/A'}</span>
+                                <span class="text-[10px] text-slate-400 font-bold uppercase">RA: ${m.ra_aluno}</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-2 text-center">${renderTecInput(m.id, 'p1', n.p1)}</td>
+                    <td class="px-2 text-center">${renderTecInput(m.id, 'p2', n.p2)}</td>
+                    <td class="px-2 text-center font-bold bg-slate-50 text-slate-400">${Number(n.media_1).toFixed(1)}</td>
+                    <td class="px-2 text-center">${renderTecInput(m.id, 'recup_parcial', n.recup_parcial, n.media_1 >= 6)}</td>
+                    <td class="px-2 text-center">${renderTecInput(m.id, 'conselho_semestral', n.conselho_semestral)}</td>
+                    <td class="px-2 text-center font-bold bg-slate-50 text-slate-400">${Number(n.media_2).toFixed(1)}</td>
+                    <td class="px-2 text-center">${renderTecInput(m.id, 'recup_final_semestral', n.recup_final_semestral, n.media_2 >= 6)}</td>
+                    <td class="px-4 text-center font-black text-base text-fmm-green">${Number(n.nota_final_periodo).toFixed(1)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderInput(matId, periodo, field, val, disabled = false) {
+            const isLow = val < 6 && val !== '' && val !== 0;
+            const inputId = `in-${matId}-${field}-${periodo}`;
+            return `<input type="text" id="${inputId}" name="${inputId}" value="${val === 0 ? '0' : (val || '')}" ${disabled ? 'disabled' : ''} 
+                    oninput="handleInput(this, 'BCC', '${matId}', '${currentDiscSigla}', '${periodo}', '${field}')" 
+                    class="grade-input ${isLow ? 'grade-low' : 'grade-ok'}" placeholder="-">`;
+        }
+        function renderAnualInput(matId, field, val, disabled = false) {
+            const inputId = `in-${matId}-${field}-anual`;
+            return `<input type="text" id="${inputId}" name="${inputId}" value="${val === 0 ? '0' : (val || '')}" ${disabled ? 'disabled' : ''} 
+                    oninput="handleInput(this, 'ANUAL', '${matId}', '${currentDiscSigla}', null, '${field}')" 
+                    class="grade-input bg-blue-50/40" placeholder="-">`;
+        }
+        function renderTecInput(matId, field, val, disabled = false) {
+            const isLow = val < 6 && val !== '' && val !== 0;
+            const inputId = `in-${matId}-${field}-tec`;
+            return `<input type="text" id="${inputId}" name="${inputId}" value="${val === 0 ? '0' : (val || '')}" ${disabled ? 'disabled' : ''} 
+                    oninput="handleInput(this, 'TEC', '${matId}', '${currentDiscSigla}', '1_SEMESTRE', '${field}')" 
+                    class="grade-input ${isLow ? 'grade-low' : 'grade-ok'}" placeholder="-">`;
+        }
+
+        function handleInput(el, type, matId, sigla, periodo, field) {
+            const valStr = el.value.replace(',', '.');
+            if (valStr !== '' && (isNaN(valStr) || valStr < 0 || valStr > 10)) { el.classList.add('ring-2', 'ring-red-500'); return; }
+            el.classList.remove('ring-2', 'ring-red-500');
+            
+            const val = valStr === '' ? 0 : parseFloat(valStr);
+
+            // Atualização Otimista
+            if (type === 'BCC') {
+                let obj = globalNotas.find(x => x.id_matricula === matId && x.periodo === periodo);
+                if (!obj) {
+                    obj = { id_matricula: matId, sigla_disciplina: sigla, periodo: periodo, p1: 0, p2: 0, rt: 0, nt: 0 };
+                    globalNotas.push(obj);
+                }
+                obj[field] = val;
+            } else if (type === 'ANUAL') {
+                let obj = globalAnual.find(x => x.id_matricula === matId);
+                if (!obj) {
+                    obj = { id_matricula: matId, sigla_disciplina: sigla, media_anual: 0, recup_final: 0, conselho_classe: 0, media_final: 0 };
+                    globalAnual.push(obj);
+                }
+                obj[field] = val;
+            } else if (type === 'TEC') {
+                let obj = globalNotas.find(x => x.id_matricula === matId);
+                if (!obj) {
+                    obj = { id_matricula: matId, sigla_disciplina: sigla, periodo: '1_SEMESTRE', p1: 0, p2: 0, media_1: 0, recup_parcial: 0, conselho_semestral: 0, media_2: 0, recup_final_semestral: 0, nota_final_periodo: 0 };
+                    globalNotas.push(obj);
+                }
+                obj[field] = val;
+            }
+
+            const timerKey = `${matId}-${field}-${periodo}`;
+            if (saveTimers[timerKey]) clearTimeout(saveTimers[timerKey]);
+            
+            const syncStatus = document.getElementById('sync-status');
+            if(syncStatus) syncStatus.classList.remove('hidden');
+            
+            saveTimers[timerKey] = setTimeout(() => { saveData(type, matId, sigla, periodo, field, val); }, 1200);
+        }
+
+        async function saveData(type, matId, sigla, periodo, field, val) {
+            try {
+                let error;
+                const conflict = type === 'ANUAL' ? 'id_matricula,sigla_disciplina' : 'id_matricula,sigla_disciplina,periodo';
+                const table = type === 'BCC' ? 'notas_basica' : (type === 'ANUAL' ? 'anual_basica' : 'notas_tecnica');
+                
+                const payload = { id_matricula: matId, sigla_disciplina: sigla, [field]: val };
+                if (periodo && type !== 'ANUAL') payload.periodo = periodo;
+
+                ({ error } = await supabaseClient.from(table).upsert(payload, { onConflict: conflict }));
+                
+                if (error) throw error;
+                showToast("Sincronizado");
+                
+                await refreshDataOnly(true);
+            } catch (err) { 
+                console.error("Erro ao salvar:", err); 
+            } finally { 
+                const syncStatus = document.getElementById('sync-status');
+                if(syncStatus) syncStatus.classList.add('hidden'); 
+            }
+        }
+
+        async function refreshDataOnly(shouldRender = true) {
+            if (!currentDiscSigla) return;
+            const turmaId = document.getElementById('selectTurma').value;
+
+            // Recarregar Dados
+            if (currentDiscType === 'BCC') {
+                const { data: nb } = await supabaseClient.from('notas_basica').select('*').eq('sigla_disciplina', currentDiscSigla);
+                const { data: ab } = await supabaseClient.from('anual_basica').select('*').eq('sigla_disciplina', currentDiscSigla);
+                
+                // Filtro em memória
+                const matriculaIds = globalMatriculas.map(m => m.id);
+                globalNotas = nb ? nb.filter(n => matriculaIds.includes(n.id_matricula)) : [];
+                globalAnual = ab ? ab.filter(a => matriculaIds.includes(a.id_matricula)) : [];
+            } else {
+                const { data: nt } = await supabaseClient.from('notas_tecnica').select('*').eq('sigla_disciplina', currentDiscSigla);
+                const matriculaIds = globalMatriculas.map(m => m.id);
+                globalNotas = nt ? nt.filter(n => matriculaIds.includes(n.id_matricula)) : [];
+            }
+            
+            if(shouldRender) renderTable();
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            if(!t) return;
+            const msgEl = document.getElementById('toast-msg');
+            if(msgEl) msgEl.innerText = msg;
+            t.classList.replace('opacity-0', 'opacity-100'); t.classList.replace('translate-y-20', 'translate-y-0');
+            setTimeout(() => { t.classList.replace('opacity-100', 'opacity-0'); t.classList.replace('translate-y-0', 'translate-y-20'); }, 2500);
+        }
+
+        async function logout() { if(confirm("Deseja encerrar a sessão?")) { await supabaseClient.auth.signOut(); window.location.href = "../index.html"; } }
+        window.onload = init;
+    </script>
+</body>
+</html>

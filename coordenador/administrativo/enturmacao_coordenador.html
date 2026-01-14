@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enturmação | SME FMM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Importação do Componente de Sidebar -->
+    <script src="../../sidebar.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        fmm: {
+                            dark: '#003c5b',
+                            blue: '#00638f',
+                            green: '#80a51b',
+                            lime: '#c8d400',
+                            bg: '#f8fafc'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; overflow: hidden; }
+        
+        /* Estilos da Sidebar (necessários para o container e animações do JS) */
+        .sidebar-transition { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .sidebar-collapsed .sidebar-text, .sidebar-collapsed .sidebar-category-header, .sidebar-collapsed .chevron-icon, .sidebar-collapsed .sidebar-category-title { display: none; }
+        .sidebar-collapsed .sidebar-item { justify-content: center; padding: 12px 0; }
+        .sidebar-collapsed .logo-full { display: none; }
+        .sidebar-collapsed .logo-short { display: block; }
+        .logo-short { display: none; }
+
+        /* Accordion Menu Styles (Usados pelo JS) */
+        .category-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(0,0,0,0.05);
+        }
+        .category-content.open {
+            max-height: 1000px;
+        }
+        .chevron-icon {
+            transition: transform 0.3s ease;
+        }
+        .rotate-180 {
+            transform: rotate(180deg);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }
+        
+        .avatar-mini {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: #f1f5f9;
+            border: 1px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .avatar-mini:hover { transform: scale(1.1); }
+    </style>
+</head>
+<body class="flex h-screen w-screen overflow-hidden">
+
+    <!-- SIDEBAR CONTAINER (Componente injetado via JS) -->
+    <aside id="sidebar-container" class="sidebar-transition w-72 bg-fmm-dark text-white flex-shrink-0 flex flex-col shadow-2xl relative z-20">
+        <!-- Carregando... -->
+    </aside>
+
+    <!-- CONTEÚDO PRINCIPAL -->
+    <main class="flex-1 flex flex-col min-w-0 bg-slate-50 overflow-hidden">
+        
+        <header class="bg-white h-20 border-b flex items-center justify-between px-8 z-10 shadow-sm flex-shrink-0">
+            <div class="flex flex-col">
+                <h1 class="text-xl font-bold text-fmm-dark">Enturmação de Alunos</h1>
+                <p class="text-xs text-slate-400">Distribuição de alunos matriculados nas turmas</p>
+            </div>
+            <button onclick="window.location.reload()" class="bg-fmm-blue hover:bg-fmm-dark text-white px-6 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all shadow-lg shadow-fmm-blue/20">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i> Atualizar Dados
+            </button>
+        </header>
+
+        <div class="flex-1 p-8 flex flex-col gap-6 overflow-hidden">
+            
+            <!-- SELEÇÃO DE TURMA -->
+            <div class="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex items-center gap-6">
+                <div class="flex flex-col gap-1 min-w-[250px]">
+                    <label class="text-[10px] font-bold text-slate-400 uppercase ml-1">Selecionar Turma Destino</label>
+                    <select id="selectTurma" onchange="handleTurmaChange()" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-fmm-blue text-sm font-bold text-fmm-dark">
+                        <option value="">Escolha uma turma...</option>
+                    </select>
+                </div>
+
+                <div id="statsTurma" class="hidden flex items-center gap-6 border-l pl-6 animate-fade-in-up">
+                    <div class="flex flex-col">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase">Vagas Preenchidas</span>
+                        <span id="vagasCount" class="text-lg font-extrabold text-fmm-blue">0 / 48</span>
+                    </div>
+                    <div class="h-8 w-px bg-slate-100"></div>
+                    <div class="flex flex-col">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase">Nível / Série</span>
+                        <span id="nivelSerieDesc" class="text-xs font-bold text-slate-600 italic">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ÁREA DE ALOCAÇÃO -->
+            <div class="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-hidden">
+                
+                <!-- DISPONÍVEIS -->
+                <div class="flex flex-col bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-slate-50 bg-slate-50/30 flex justify-between items-center">
+                        <div>
+                            <h3 class="font-bold text-fmm-dark text-sm">Alunos Disponíveis</h3>
+                            <p class="text-[10px] text-slate-400 font-medium">Sem turma vinculada</p>
+                        </div>
+                        <div class="relative w-48">
+                            <i data-lucide="search" class="absolute left-3 top-2 w-3.5 h-3.5 text-slate-400"></i>
+                            <input type="text" id="searchDisponivel" onkeyup="renderLists()" placeholder="Buscar aluno..." class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:ring-1 focus:ring-fmm-blue">
+                        </div>
+                    </div>
+                    <div id="listDisponiveis" class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar"></div>
+                </div>
+
+                <!-- ALOCADOS -->
+                <div class="flex flex-col bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-slate-50 bg-fmm-blue/5 flex justify-between items-center">
+                        <div>
+                            <h3 class="font-bold text-fmm-blue text-sm">Alunos Alocados na Turma</h3>
+                            <p id="turmaTitle" class="text-[10px] text-fmm-blue/60 font-bold uppercase tracking-widest">Nenhuma turma selecionada</p>
+                        </div>
+                        <div class="w-10 h-10 bg-fmm-blue rounded-xl flex items-center justify-center text-white shadow-lg">
+                            <i data-lucide="users" class="w-5 h-5"></i>
+                        </div>
+                    </div>
+                    <div id="listAlocados" class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar bg-slate-50/30"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- MODAL DE ZOOM DA FOTO -->
+    <div id="photoModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4" onclick="closePhotoZoom()">
+        <div class="relative animate-fade-in-up" onclick="event.stopPropagation()">
+            <button onclick="closePhotoZoom()" class="absolute -top-12 -right-4 text-white hover:text-fmm-lime transition-colors">
+                <i data-lucide="x" class="w-8 h-8"></i>
+            </button>
+            <img id="enlargedPhoto" src="" class="max-w-[90vw] max-h-[80vh] rounded-[40px] shadow-2xl border-4 border-white/10 object-contain">
+            <div id="enlargedName" class="mt-4 text-center text-white font-bold text-lg tracking-tight"></div>
+        </div>
+    </div>
+
+    <script>
+        const supabaseUrl = 'https://panxfescmzjdltthreqy.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbnhmZXNjbXpqZGx0dGhyZXF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTA5NDMsImV4cCI6MjA4MjYyNjk0M30.jSZVhw2TFD52zRV4NZUGUeXKBHedWXcdH7w_fXeoGhA';
+        const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+
+        let todasTurmas = [];
+        let todosAlunos = [];
+        let turmaAtualId = "";
+        let userLevels = [];
+
+        // TRATAMENTO DE LINKS DO DRIVE
+        function formatDriveUrl(url) {
+            if (!url) return null;
+            if (url.includes('drive.google.com') && url.includes('/file/d/')) {
+                const idMatch = url.match(/\/d\/(.*?)\//);
+                if (idMatch && idMatch[1]) return `https://lh3.googleusercontent.com/d/${idMatch[1]}`;
+            }
+            return url;
+        }
+
+        // ZOOM DA FOTO
+        function openPhotoZoom(url, name) {
+            const modal = document.getElementById('photoZoomModal');
+            const img = document.getElementById('enlargedPhoto');
+            const nameDiv = document.getElementById('enlargedName');
+            img.src = url;
+            nameDiv.innerText = name;
+            modal.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closePhotoZoom() {
+            document.getElementById('photoZoomModal').classList.add('hidden');
+        }
+
+        async function initData() {
+            const { data: { user } } = await supabaseClient.auth.getUser();
+            if (!user) return window.location.href = '../../index.html'; 
+            
+            // Buscar permissões
+            const { data: perfil } = await supabaseClient.from('perfis').select('niveis_acesso').eq('id', user.id).single();
+            userLevels = perfil?.niveis_acesso || ['EF1', 'EF2', 'EMT'];
+
+            // Inicializar Sidebar Componentizada
+            await SidebarComponent.render('sidebar-container');
+
+            try {
+                // Filtra turmas pelo nível de acesso no client-side para o select
+                const { data: turmas } = await supabaseClient.from('turmas').select('*').order('nome');
+                todasTurmas = turmas ? turmas.filter(t => userLevels.includes(t.nivel)) : [];
+                
+                const select = document.getElementById('selectTurma');
+                select.innerHTML = '<option value="">Escolha uma turma...</option>' + 
+                    todasTurmas.map(t => `<option value="${t.id}">${t.nome} - ${t.serie} ${t.nivel}</option>`).join('');
+                
+                await fetchAlunos();
+            } catch (err) { console.error(err); }
+        }
+
+        async function fetchAlunos() {
+            // Busca todos os alunos para distribuir (otimização: poderia filtrar por nível se houvesse na tabela de alunos, mas o vínculo é pela turma)
+            const { data: alunos } = await supabaseClient.from('alunos').select('*').order('nome_completo');
+            todosAlunos = alunos || [];
+            renderLists();
+        }
+
+        function renderLists() {
+            const listDisp = document.getElementById('listDisponiveis');
+            const listAloc = document.getElementById('listAlocados');
+            const searchVal = document.getElementById('searchDisponivel').value.toLowerCase();
+
+            // Alunos disponíveis são aqueles sem turma
+            const disponiveis = todosAlunos.filter(a => !a.id_turma && a.nome_completo.toLowerCase().includes(searchVal));
+            
+            listDisp.innerHTML = disponiveis.length === 0 
+                ? `<p class="text-center py-10 text-slate-300 text-xs italic">Nenhum aluno disponível</p>`
+                : disponiveis.map(aluno => {
+                    const formattedUrl = formatDriveUrl(aluno.url_foto);
+                    const photo = aluno.url_foto 
+                        ? `<img src="${formattedUrl}" class="avatar-mini" onclick="openPhotoZoom('${formattedUrl}', '${aluno.nome_completo}')" onerror="this.parentElement.innerHTML='<div class=\'avatar-mini flex items-center justify-center text-[10px] font-bold text-slate-500\'>${aluno.nome_completo.charAt(0)}</div>'">` 
+                        : `<div class="avatar-mini flex items-center justify-center text-[10px] font-bold text-slate-500">${aluno.nome_completo.charAt(0)}</div>`;
+
+                    return `
+                    <div class="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-2xl hover:border-fmm-blue/30 transition-all shadow-sm group">
+                        <div class="flex items-center gap-3">
+                            <div class="flex-shrink-0">${photo}</div>
+                            <div class="flex flex-col">
+                                <span class="text-xs font-bold text-fmm-dark">${aluno.nome_completo}</span>
+                                <span class="text-[9px] text-slate-400 font-bold uppercase">RA: ${aluno.ra}</span>
+                            </div>
+                        </div>
+                        <button onclick="moverParaTurma('${aluno.ra}')" class="p-2 text-fmm-blue hover:bg-fmm-blue hover:text-white rounded-xl transition-all opacity-0 group-hover:opacity-100">
+                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                `}).join('');
+
+            if (turmaAtualId) {
+                const alocados = todosAlunos.filter(a => a.id_turma === turmaAtualId);
+                // ATUALIZADO: Limite para 48 alunos
+                document.getElementById('vagasCount').innerText = `${alocados.length} / 48`;
+
+                listAloc.innerHTML = alocados.length === 0
+                    ? `<div class="h-full flex items-center justify-center text-slate-300 text-xs italic">Turma vazia</div>`
+                    : alocados.map(aluno => {
+                        const formattedUrl = formatDriveUrl(aluno.url_foto);
+                        const photo = aluno.url_foto 
+                            ? `<img src="${formattedUrl}" class="avatar-mini" onclick="openPhotoZoom('${formattedUrl}', '${aluno.nome_completo}')" onerror="this.parentElement.innerHTML='<div class=\'avatar-mini flex items-center justify-center text-[10px] font-bold text-fmm-blue\'>${aluno.nome_completo.charAt(0)}</div>'">` 
+                            : `<div class="avatar-mini flex items-center justify-center text-[10px] font-bold text-fmm-blue bg-fmm-blue/10">${aluno.nome_completo.charAt(0)}</div>`;
+
+                        return `
+                        <div class="flex items-center justify-between p-3 bg-white border border-fmm-blue/10 rounded-2xl shadow-sm group">
+                            <div class="flex items-center gap-3">
+                                <div class="flex-shrink-0">${photo}</div>
+                                <div class="flex flex-col">
+                                    <span class="text-xs font-bold text-fmm-dark">${aluno.nome_completo}</span>
+                                    <span class="text-[9px] text-slate-400 font-bold uppercase">RA: ${aluno.ra}</span>
+                                </div>
+                            </div>
+                            <button onclick="removerDaTurma('${aluno.ra}')" class="p-2 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all opacity-0 group-hover:opacity-100">
+                                <i data-lucide="minus-circle" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    `}).join('');
+            } else {
+                listAloc.innerHTML = `<div class="h-full flex flex-col items-center justify-center text-slate-300 gap-2"><i data-lucide="arrow-left-right" class="w-10 h-10 opacity-20"></i><p class="text-xs font-medium italic">Selecione uma turma para carregar os dados</p></div>`;
+            }
+            lucide.createIcons();
+        }
+
+        async function handleTurmaChange() {
+            const select = document.getElementById('selectTurma');
+            turmaAtualId = select.value;
+            const stats = document.getElementById('statsTurma');
+            const title = document.getElementById('turmaTitle');
+            const desc = document.getElementById('nivelSerieDesc');
+
+            if (turmaAtualId) {
+                const t = todasTurmas.find(x => x.id === turmaAtualId);
+                if (t) {
+                    stats.classList.remove('hidden');
+                    title.innerText = t.nome;
+                    desc.innerText = `${t.nivel} / ${t.serie} ${t.area_tecnica ? `- ${t.area_tecnica}` : ''}`;
+                    renderLists();
+                }
+            } else {
+                stats.classList.add('hidden');
+                title.innerText = "Nenhuma turma selecionada";
+                renderLists();
+            }
+        }
+
+        async function moverParaTurma(ra) {
+            if (!turmaAtualId) return;
+            // Atualiza aluno e cria matrícula automaticamente se necessário (trigger no banco ou lógica aqui)
+            // Para simplificar, atualizamos o ID da turma no aluno e criamos a matrícula
+            const { error } = await supabaseClient.from('alunos').update({ id_turma: turmaAtualId }).eq('ra', ra);
+            
+            if (!error) {
+                // Criar matrícula para o ano corrente se não existir
+                await supabaseClient.from('matriculas').upsert({ 
+                    ra_aluno: ra, 
+                    id_turma: turmaAtualId, 
+                    ano_letivo: 2026, 
+                    status: 'CURSANDO'
+                }, { onConflict: 'ra_aluno, id_turma, ano_letivo' });
+
+                const idx = todosAlunos.findIndex(a => a.ra === ra);
+                if (idx !== -1) todosAlunos[idx].id_turma = turmaAtualId;
+                renderLists();
+            }
+        }
+
+        async function removerDaTurma(ra) {
+            if(!confirm("Remover este aluno da turma?")) return;
+            const { error } = await supabaseClient.from('alunos').update({ id_turma: null }).eq('ra', ra);
+            
+            if (!error) {
+                // Opcional: Desativar matrícula ou remover
+                // await supabaseClient.from('matriculas').delete().eq('ra_aluno', ra).eq('ano_letivo', 2026);
+
+                const idx = todosAlunos.findIndex(a => a.ra === ra);
+                if (idx !== -1) todosAlunos[idx].id_turma = null;
+                renderLists();
+            }
+        }
+
+        // --- SIDEBAR LOGIC (Suporte ao Componente) ---
+        function toggleSidebar() {
+            if (window.SidebarComponent) SidebarComponent.toggleSidebar();
+        }
+
+        function toggleCategory(id) {
+            if (window.SidebarComponent) SidebarComponent.toggleCategory(id);
+        }
+
+        async function handleLogout() { if (confirm("Deseja sair do sistema?")) { await supabaseClient.auth.signOut(); window.location.href = "../../index.html"; } }
+
+        window.onload = () => { initData(); lucide.createIcons(); };
+    </script>
+</body>
+</html>

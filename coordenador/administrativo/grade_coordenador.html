@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grade Horária | SME FMM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Importação do Componente de Sidebar -->
+    <script src="../../sidebar.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        fmm: {
+                            dark: '#003c5b',
+                            blue: '#00638f',
+                            green: '#80a51b',
+                            lime: '#c8d400',
+                            bg: '#f8fafc'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; overflow: hidden; }
+        
+        /* Estilos da Sidebar (necessários para o container e animações do JS) */
+        .sidebar-transition { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .sidebar-collapsed .sidebar-text, .sidebar-collapsed .sidebar-category-header, .sidebar-collapsed .chevron-icon, .sidebar-collapsed .sidebar-category-title { display: none; }
+        .sidebar-collapsed .sidebar-item { justify-content: center; padding: 12px 0; }
+        .sidebar-collapsed .logo-full { display: none; }
+        .sidebar-collapsed .logo-short { display: block; }
+        .logo-short { display: none; }
+
+        /* Accordion Menu Styles (Usados pelo JS) */
+        .category-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(0,0,0,0.05);
+        }
+        .category-content.open {
+            max-height: 1000px;
+        }
+        .chevron-icon {
+            transition: transform 0.3s ease;
+        }
+        .rotate-180 {
+            transform: rotate(180deg);
+        }
+
+        /* Estilos da Grade */
+        .grid-container {
+            display: grid;
+            grid-template-columns: 100px repeat(5, 1fr);
+            border: 1px solid #e2e8f0;
+            background: white;
+            border-radius: 1.5rem;
+            overflow: hidden;
+        }
+        .grid-header {
+            background: #f1f5f9;
+            padding: 1rem;
+            text-align: center;
+            font-weight: 700;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: #64748b;
+            border-bottom: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+        }
+        .time-cell {
+            padding: 1rem;
+            background: #f8fafc;
+            font-weight: 700;
+            font-size: 0.65rem;
+            color: #003c5b;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+            line-height: 1.4;
+        }
+        .slot-cell {
+            min-height: 100px;
+            padding: 0.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+        .slot-cell:hover { background: #f0f9ff; }
+        .break-row {
+            grid-column: span 6;
+            background: #fffbeb;
+            padding: 0.5rem;
+            text-align: center;
+            font-size: 0.65rem;
+            font-weight: 800;
+            color: #b45309;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            border-bottom: 1px solid #fde68a;
+        }
+        .lunch-row {
+            grid-column: span 6;
+            background: #f0fdf4;
+            padding: 1rem;
+            text-align: center;
+            font-size: 0.75rem;
+            font-weight: 800;
+            color: #15803d;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            border-bottom: 1px solid #bbf7d0;
+        }
+        .class-card {
+            padding: 0.75rem;
+            border-radius: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            border-left-width: 4px;
+        }
+
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body class="flex h-screen w-screen overflow-hidden">
+
+    <!-- SIDEBAR CONTAINER (Componente injetado via JS) -->
+    <aside id="sidebar-container" class="sidebar-transition w-72 bg-fmm-dark text-white flex-shrink-0 flex flex-col shadow-2xl relative z-20">
+        <!-- Carregando... -->
+    </aside>
+
+    <!-- CONTEÚDO PRINCIPAL -->
+    <main class="flex-1 flex flex-col min-w-0 bg-slate-50 overflow-hidden">
+        <header class="bg-white h-20 border-b flex items-center justify-between px-8 z-10 shadow-sm flex-shrink-0">
+            <div class="flex flex-col">
+                <h1 class="text-xl font-bold text-fmm-dark">Grade Horária Acadêmica</h1>
+                <p class="text-xs text-slate-400">Configuração de tempos de aula e atribuições</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <select id="selectTurmaGrade" onchange="handleTurmaChange()" class="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-fmm-blue text-fmm-dark">
+                    <option value="">Selecionar Turma...</option>
+                </select>
+                <button id="btnSaveGrade" onclick="saveFullGrade()" class="bg-fmm-blue hover:bg-fmm-dark text-white px-6 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-lg shadow-fmm-blue/20">
+                    <i data-lucide="save" class="w-4 h-4"></i> Salvar Grade
+                </button>
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-y-auto p-8 custom-scrollbar">
+            <div class="grid-container shadow-xl">
+                <div class="grid-header">Horário</div>
+                <div class="grid-header">Segunda</div>
+                <div class="grid-header">Terça</div>
+                <div class="grid-header">Quarta</div>
+                <div class="grid-header">Quinta</div>
+                <div class="grid-header">Sexta</div>
+
+                <!-- Template de tempos gerado dinamicamente no JS para manter o HTML limpo -->
+                <div id="grade-rows-container" class="contents"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- MODAL DE ATRIBUIÇÃO -->
+    <div id="assignModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-fmm-dark/60 backdrop-blur-sm p-4">
+        <div class="bg-white w-full max-w-md rounded-[32px] shadow-2xl flex flex-col animate-fade-in-up">
+            <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-white">
+                <h2 class="text-xl font-bold text-fmm-dark">Atribuir Aula</h2>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-slate-100">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            <div class="p-8 space-y-5">
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold text-slate-400 uppercase ml-1">Disciplina</label>
+                    <!-- Ajuste: Adicionado onchange para filtrar professores -->
+                    <select id="modalDisc" onchange="filterProfessorsByDisc()" class="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-fmm-blue text-sm font-medium">
+                        <option value="">Selecionar Disciplina...</option>
+                    </select>
+                </div>
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold text-slate-400 uppercase ml-1">Professor Responsável</label>
+                    <select id="modalProf" class="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-fmm-blue text-sm font-medium">
+                        <option value="">Selecione primeiro a disciplina...</option>
+                    </select>
+                </div>
+            </div>
+            <div class="p-8 border-t bg-slate-50/50 rounded-b-[32px] flex justify-end gap-3">
+                <button onclick="closeModal()" class="px-6 py-3 text-sm font-bold text-slate-500 hover:text-slate-700 transition-all">Cancelar</button>
+                <button onclick="confirmAssignment()" class="bg-fmm-lime text-fmm-dark font-bold text-sm px-8 py-3 rounded-2xl shadow-xl shadow-fmm-lime/20 hover:scale-105 active:scale-95 transition-all">
+                    Confirmar Atribuição
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const supabaseUrl = 'https://panxfescmzjdltthreqy.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbnhmZXNjbXpqZGx0dGhyZXF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTA5NDMsImV4cCI6MjA4MjYyNjk0M30.jSZVhw2TFD52zRV4NZUGUeXKBHedWXcdH7w_fXeoGhA';
+        const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+
+        let currentTargetCell = null, currentDay = null, currentPeriod = null;
+        let localScheduleState = [], listDisciplinas = [], listProfessores = [], listVinculos = [];
+
+        async function initGrade() {
+            const { data: { user } } = await supabaseClient.auth.getUser();
+            if (!user) return window.location.href = '../../index.html'; 
+
+            // Inicializar Sidebar Componentizada
+            await SidebarComponent.render('sidebar-container');
+
+            renderGradeSkeleton();
+
+            try {
+                const { data: turmas } = await supabaseClient.from('turmas').select('*').order('nome');
+                const selectT = document.getElementById('selectTurmaGrade');
+                selectT.innerHTML = '<option value="">Selecionar Turma...</option>' + 
+                    turmas.map(t => `<option value="${t.id}">${t.nome} (${t.serie})</option>`).join('');
+
+                const { data: discs } = await supabaseClient.from('disciplinas').select('*').order('nome');
+                const { data: profs } = await supabaseClient.from('perfis').select('id, nome_completo').eq('cargo', 'professor').order('nome_completo');
+                
+                // Novo: Buscar vínculos para filtragem
+                const { data: vinculos } = await supabaseClient.from('professor_disciplinas').select('*');
+                
+                listDisciplinas = discs;
+                listProfessores = profs;
+                listVinculos = vinculos || [];
+
+                document.getElementById('modalDisc').innerHTML = '<option value="">Selecionar Disciplina...</option>' + 
+                    discs.map(d => `<option value="${d.sigla}">${d.nome} (${d.sigla})</option>`).join('');
+
+                // Inicialmente, o professor está vazio até selecionar a matéria
+                document.getElementById('modalProf').innerHTML = '<option value="">Selecione primeiro a disciplina...</option>';
+                
+            } catch (err) { console.error(err); }
+            lucide.createIcons();
+        }
+
+        // Novo: Função para filtrar professores dinamicamente
+        function filterProfessorsByDisc() {
+            const sigla = document.getElementById('modalDisc').value;
+            const selectP = document.getElementById('modalProf');
+
+            if (!sigla) {
+                selectP.innerHTML = '<option value="">Selecione primeiro a disciplina...</option>';
+                return;
+            }
+
+            // Encontrar IDs dos professores que dão essa matéria
+            const idsPermitidos = listVinculos
+                .filter(v => v.sigla_disciplina === sigla)
+                .map(v => v.id_professor);
+
+            const profsFiltrados = listProfessores.filter(p => idsPermitidos.includes(p.id));
+
+            if (profsFiltrados.length === 0) {
+                selectP.innerHTML = '<option value="">Nenhum professor vinculado a esta matéria</option>';
+            } else {
+                selectP.innerHTML = '<option value="">Selecionar Professor...</option>' + 
+                    profsFiltrados.map(p => `<option value="${p.id}">${p.nome_completo}</option>`).join('');
+            }
+        }
+
+        function renderGradeSkeleton() {
+            const container = document.getElementById('grade-rows-container');
+            const times = [
+                { start: "07:00", end: "07:50", p: 1 },
+                { start: "07:50", end: "08:40", p: 2 },
+                { start: "08:40", end: "09:30", p: 3 },
+                { break: "Intervalo de Lanche (09:30 - 09:50)" },
+                { start: "09:50", end: "10:40", p: 4 },
+                { start: "10:40", end: "11:30", p: 5 },
+                { lunch: "Período de Almoço (11:30 - 13:00)" },
+                { start: "13:00", end: "13:50", p: 6 },
+                { start: "13:50", end: "14:40", p: 7 },
+                { break: "Intervalo de Lanche Tarde (14:40 - 15:00)" },
+                { start: "15:00", end: "15:50", p: 8 }
+            ];
+
+            const days = ['SEG', 'TER', 'QUA', 'QUI', 'SEX'];
+            let html = '';
+
+            times.forEach(item => {
+                if (item.break) {
+                    html += `<div class="break-row">${item.break}</div>`;
+                } else if (item.lunch) {
+                    html += `<div class="lunch-row">${item.lunch}</div>`;
+                } else {
+                    html += `<div class="time-cell">
+                                <span>de ${item.start}</span>
+                                <span>às ${item.end}</span>
+                             </div>`;
+                    days.forEach(day => {
+                        html += `<div class="slot-cell" id="${day}-${item.p}" onclick="assignClass(this, '${day}', ${item.p})"></div>`;
+                    });
+                }
+            });
+            container.innerHTML = html;
+        }
+
+        async function handleTurmaChange() {
+            const turmaId = document.getElementById('selectTurmaGrade').value;
+            clearGridUI(); localScheduleState = [];
+            if (!turmaId) return;
+
+            const { data, error } = await supabaseClient
+                .from('grade_horaria')
+                .select('*, perfis(nome_completo), disciplinas(nome, cor)')
+                .eq('id_turma', turmaId);
+
+            if (error) return console.error(error);
+
+            data.forEach(item => {
+                const cell = document.getElementById(`${item.dia_semana}-${item.numero_tempo}`);
+                if (cell) {
+                    localScheduleState.push({
+                        id_turma: item.id_turma, dia_semana: item.dia_semana,
+                        numero_tempo: item.numero_tempo, sigla_disciplina: item.sigla_disciplina,
+                        id_professor: item.id_professor
+                    });
+                    updateCellUI(cell, item.disciplinas.nome, item.perfis.nome_completo, item.disciplinas.cor);
+                }
+            });
+        }
+
+        function updateCellUI(cell, discNome, profNome, cor) {
+            const bgLight = cor + '10';
+            cell.innerHTML = `
+                <div class="class-card animate-fade-in-up" style="border-left-color: ${cor}; background-color: ${bgLight}">
+                    <div class="flex flex-col">
+                        <span class="text-[10px] font-extrabold uppercase truncate" style="color: ${cor}">${discNome}</span>
+                        <span class="text-[9px] text-slate-400 font-bold truncate mt-1">${profNome}</span>
+                    </div>
+                    <div class="flex justify-end mt-2">
+                        <button onclick="event.stopPropagation(); clearSlot('${cell.id}')" class="p-1 text-slate-300 hover:text-red-500 transition-colors">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function clearGridUI() { document.querySelectorAll('.slot-cell').forEach(c => c.innerHTML = ''); }
+
+        function assignClass(cell, day, period) {
+            if (!document.getElementById('selectTurmaGrade').value) return alert("Selecione uma turma primeiro.");
+            currentTargetCell = cell; currentDay = day; currentPeriod = period;
+            
+            // Resetar o modal para estado limpo
+            document.getElementById('modalDisc').value = '';
+            document.getElementById('modalProf').innerHTML = '<option value="">Selecione primeiro a disciplina...</option>';
+            
+            document.getElementById('assignModal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('assignModal').classList.add('hidden');
+            document.getElementById('modalDisc').value = ''; 
+            document.getElementById('modalProf').value = '';
+        }
+
+        function confirmAssignment() {
+            const sigla = document.getElementById('modalDisc').value;
+            const profId = document.getElementById('modalProf').value;
+            const turmaId = document.getElementById('selectTurmaGrade').value;
+
+            if (sigla && profId) {
+                const disc = listDisciplinas.find(d => d.sigla === sigla);
+                const prof = listProfessores.find(p => p.id === profId);
+
+                localScheduleState = localScheduleState.filter(x => !(x.dia_semana === currentDay && x.numero_tempo === currentPeriod));
+                localScheduleState.push({
+                    id_turma: turmaId, dia_semana: currentDay,
+                    numero_tempo: currentPeriod, sigla_disciplina: sigla,
+                    id_professor: profId
+                });
+
+                updateCellUI(currentTargetCell, disc.nome, prof.nome_completo, disc.cor);
+                closeModal();
+            } else { alert("Selecione disciplina e professor."); }
+        }
+
+        function clearSlot(cellId) {
+            if (confirm("Remover esta aula?")) {
+                const cell = document.getElementById(cellId);
+                const [day, period] = cellId.split('-');
+                localScheduleState = localScheduleState.filter(x => !(x.dia_semana === day && x.numero_tempo === parseInt(period)));
+                cell.innerHTML = '';
+            }
+        }
+
+        async function saveFullGrade() {
+            const turmaId = document.getElementById('selectTurmaGrade').value;
+            if(!turmaId) return alert("Selecione uma turma.");
+            const btn = document.getElementById('btnSaveGrade');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Salvando...';
+            lucide.createIcons();
+            try {
+                await supabaseClient.from('grade_horaria').delete().eq('id_turma', turmaId);
+                if (localScheduleState.length > 0) {
+                    const { error } = await supabaseClient.from('grade_horaria').insert(localScheduleState);
+                    if (error) throw error;
+                }
+                alert("Grade salva com sucesso!");
+            } catch (err) { alert("Erro ao salvar: " + err.message); }
+            finally { 
+                btn.disabled = false; btn.innerHTML = '<i data-lucide="save" class="w-4 h-4"></i> Salvar Grade'; 
+                lucide.createIcons();
+            }
+        }
+
+        // --- SIDEBAR LOGIC (Suporte ao Componente) ---
+        function toggleSidebar() {
+            if (window.SidebarComponent) SidebarComponent.toggleSidebar();
+        }
+
+        function toggleCategory(id) {
+            if (window.SidebarComponent) SidebarComponent.toggleCategory(id);
+        }
+
+        async function handleLogout() { if (confirm("Deseja sair do sistema?")) { await supabaseClient.auth.signOut(); window.location.href = "../../index.html"; } }
+
+        window.onload = () => { initGrade(); lucide.createIcons(); };
+    </script>
+</body>
+</html>
