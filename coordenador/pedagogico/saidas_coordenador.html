@@ -304,7 +304,8 @@
         let allStudents = [];
         let selectedStudent = null;
         let currentRecords = [];
-        let globalAlertsList = []; // Lista de todos os alunos com alerta
+        let globalAlertsList = []; 
+        let userLevels = []; // Níveis permitidos ao coordenador
 
         function formatDriveUrl(url) {
             if (!url) return null;
@@ -323,6 +324,13 @@
             if(user) {
                 const { data: profile } = await window.supabaseClient.from('perfis').select('*').eq('id', user.id).single();
                 currentUser = profile;
+
+                // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
             }
 
             populateSelects();
@@ -348,10 +356,17 @@
         }
 
         async function fetchAllStudents() {
-            const { data, error } = await window.supabaseClient
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            let query = window.supabaseClient
                 .from('alunos')
-                .select('ra, nome_completo, url_foto, turmas(nome)')
+                .select('ra, nome_completo, url_foto, turmas!inner(nome, nivel)')
                 .order('nome_completo');
+            
+            if (userLevels.length > 0) {
+                query = query.in('turmas.nivel', userLevels);
+            }
+
+            const { data, error } = await query;
             
             if (error) return console.error(error);
             allStudents = data || [];
@@ -413,7 +428,6 @@
             container.innerHTML = '<div class="text-center py-10"><i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto text-slate-300"></i></div>';
             lucide.createIcons();
             
-            // Assume tabela 'saidas' já criada (verificar setup_saidas.sql)
             const { data, error } = await window.supabaseClient
                 .from('saidas')
                 .select('*, perfis(nome_completo)')
@@ -475,20 +489,24 @@
             lucide.createIcons();
         }
 
-        // --- LÓGICA DE ALERTA GLOBAL (>= 10 SAÍDAS/MÊS) ---
         async function checkGlobalExitAlerts(showModal = false) {
             const btnAlerts = document.getElementById('btnAlerts');
             const alertCount = document.getElementById('alertCount');
             const listContainer = document.getElementById('alertsList');
             
-            // Busca global de saídas
-            const { data: allExits, error } = await window.supabaseClient
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            let query = window.supabaseClient
                 .from('saidas')
-                .select('aluno_ra, data_saida, alunos(nome_completo, turmas(nome))');
+                .select('aluno_ra, data_saida, alunos!inner(nome_completo, turmas!inner(nome, nivel))');
+
+            if (userLevels.length > 0) {
+                query = query.in('alunos.turmas.nivel', userLevels);
+            }
+
+            const { data: allExits, error } = await query;
 
             if (error || !allExits) return;
 
-            // Agrupa por Aluno + Mês
             const alertsMap = {}; 
             allExits.forEach(ex => {
                 const datePart = ex.data_saida.split('T')[0];
@@ -507,10 +525,8 @@
                 alertsMap[key].count++;
             });
 
-            // Filtra >= 10
             globalAlertsList = Object.values(alertsMap).filter(item => item.count >= 10);
 
-            // Atualiza Botão
             if (globalAlertsList.length > 0) {
                 btnAlerts.classList.remove('hidden');
                 alertCount.innerText = globalAlertsList.length;
@@ -518,7 +534,6 @@
                 btnAlerts.classList.add('hidden');
             }
 
-            // Renderiza Modal se solicitado
             if (showModal) {
                 listContainer.innerHTML = '';
                 if (globalAlertsList.length === 0) {
@@ -549,7 +564,6 @@
             }
         }
 
-        // --- CRUD ---
         function openNewRecordModal() { openRecordModal(null); }
 
         function openRecordModal(record) {
@@ -557,7 +571,6 @@
             const btnDelete = document.getElementById('btnDelete');
             const title = modal.querySelector('h2');
             
-            // Reset Form
             document.getElementById('recDate').valueAsDate = new Date();
             document.getElementById('recTime').value = new Date().toTimeString().substring(0, 5);
             document.getElementById('recAuth').value = '';
@@ -627,7 +640,7 @@
 
             const payload = {
                 aluno_ra: selectedStudent.ra,
-                usuario_id: currentUser.id, // Relaciona com quem está logado
+                usuario_id: currentUser.id,
                 data_saida, hora_saida, autorizado_por, motivo, transporte, retorno
             };
 
@@ -648,7 +661,7 @@
                 showToast("Saída registada com sucesso!");
                 closeRecordModal();
                 fetchHistory();
-                checkGlobalExitAlerts(false); // Atualiza contador
+                checkGlobalExitAlerts(false); 
             } catch (err) {
                 console.error(err);
                 alert("Erro ao salvar: " + err.message);
@@ -672,7 +685,6 @@
             checkGlobalExitAlerts(false);
         }
 
-        // --- UTILITÁRIOS ---
         function openPhotoZoom() {
             if(!selectedStudent) return;
             const modal = document.getElementById('photoModal');
@@ -680,7 +692,7 @@
             document.getElementById('enlargedName').innerText = selectedStudent.nome_completo;
             modal.classList.remove('hidden');
         }
-        function closePhotoZoom() { document.getElementById('photoModal').classList.add('hidden'); }
+        function closePhotoModal() { document.getElementById('photoModal').classList.add('hidden'); }
         function showToast(msg) {
             const t = document.getElementById('toast');
             document.getElementById('toast-msg').innerText = msg;

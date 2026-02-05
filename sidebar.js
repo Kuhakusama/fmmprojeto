@@ -1,9 +1,36 @@
 /**
  * Componente de Sidebar Reutilizável SME FMM 2026
- * Versão Corrigida: Restaurando funcionalidade de Toggle (Minimizar/Maximizar)
+ * Versão Ultra-Blindada: Injeção automática de CSS e correção de sobreposição.
  */
 const SidebarComponent = {
-    // Configuração de todos os itens de menu
+    // Estilos internos para garantir que a sidebar NUNCA quebre, independente da página
+    styles: `
+        .sidebar-transition { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .sidebar-collapsed .sidebar-text, 
+        .sidebar-collapsed .sidebar-category, 
+        .sidebar-collapsed .chevron-icon,
+        .sidebar-collapsed .sidebar-category-header span { 
+            display: none !important; 
+        }
+        .sidebar-collapsed .sidebar-item { justify-content: center !important; padding: 12px 0 !important; }
+        .sidebar-collapsed .logo-full { display: none !important; }
+        .sidebar-collapsed .logo-short { display: block !important; }
+        
+        .category-content { 
+            overflow: hidden; 
+            transition: max-height 0.3s ease-out; 
+            background: rgba(0,0,0,0.05);
+        }
+        .category-content.open { max-height: 1000px; }
+        .sidebar-item-active { 
+            background-color: rgba(255, 255, 255, 0.08); 
+            border-right: 4px solid #c8d400; 
+            color: #ffffff !important; 
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+    `,
+
     menuItems: {
         principal: [
             { label: 'Dashboard', icon: 'pie-chart', link: 'coordenador/principal/dashboard_coordenador.html', roles: ['coordenador', 'diretor', 'orientador'] },
@@ -52,7 +79,20 @@ const SidebarComponent = {
         return './';
     },
 
+    filterItemsByRole: function(items, role) {
+        return items.filter(item => item.roles.includes(role));
+    },
+
+    injectStyles: function() {
+        if (document.getElementById('sidebar-dynamic-styles')) return;
+        const styleTag = document.createElement('style');
+        styleTag.id = 'sidebar-dynamic-styles';
+        styleTag.innerHTML = this.styles;
+        document.head.appendChild(styleTag);
+    },
+
     render: async function(containerId) {
+        this.injectStyles(); // Garante o CSS correto
         const prefix = this.getRelativePrefix();
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -72,13 +112,18 @@ const SidebarComponent = {
         let navHTML = '';
 
         if (userRole === 'professor') {
-            navHTML += this.buildSimpleCategory('Portal do Docente', this.menuItems.docente, activePage, prefix);
+            const docenteItems = this.filterItemsByRole(this.menuItems.docente, userRole);
+            navHTML += this.buildSimpleCategory('Portal do Docente', docenteItems, activePage, prefix);
         } else {
-            navHTML += this.buildAccordion('Principal', 'cat-principal', 'layout', this.menuItems.principal, activePage, prefix);
-            navHTML += this.buildAccordion('Administrativo', 'cat-adm', 'settings', this.menuItems.administrativo, activePage, prefix);
-            navHTML += this.buildAccordion('Pedagógico', 'cat-ped', 'heart-handshake', this.menuItems.pedagogico, activePage, prefix);
-            navHTML += this.buildAccordion('Notas', 'cat-notas', 'bar-chart-3', this.menuItems.notas, activePage, prefix);
-            navHTML += this.buildSimpleCategory('Atalhos Docentes', this.menuItems.docente, activePage, prefix);
+            const principalItems = this.filterItemsByRole(this.menuItems.principal, userRole);
+            const admItems = this.filterItemsByRole(this.menuItems.administrativo, userRole);
+            const pedItems = this.filterItemsByRole(this.menuItems.pedagogico, userRole);
+            const notasItems = this.filterItemsByRole(this.menuItems.notas, userRole);
+
+            if (principalItems.length) navHTML += this.buildAccordion('Principal', 'cat-principal', 'layout', principalItems, activePage, prefix);
+            if (admItems.length) navHTML += this.buildAccordion('Administrativo', 'cat-adm', 'settings', admItems, activePage, prefix);
+            if (pedItems.length) navHTML += this.buildAccordion('Pedagógico', 'cat-ped', 'heart-handshake', pedItems, activePage, prefix);
+            if (notasItems.length) navHTML += this.buildAccordion('Notas', 'cat-notas', 'bar-chart-3', notasItems, activePage, prefix);
         }
 
         container.innerHTML = `
@@ -86,7 +131,6 @@ const SidebarComponent = {
                 <div class="p-6 h-24 border-b border-white/5 flex items-center justify-center relative flex-shrink-0">
                     <img src="${prefix}assets/logo-fmm-white.png" alt="FMM" class="logo-full h-10 object-contain" onerror="this.style.display='none'; this.nextElementSibling.style.display='block'">
                     <div class="logo-short font-black text-2xl text-[#c8d400] hidden">M</div>
-                    <!-- Botão de Toggle Restaurado -->
                     <button onclick="SidebarComponent.toggleSidebar()" class="absolute -right-3 top-20 bg-[#c8d400] text-[#003c5b] rounded-full p-1 shadow-lg hover:scale-110 transition-transform z-[60]">
                         <i id="sidebar-toggle-icon" data-lucide="chevron-left" class="w-4 h-4"></i>
                     </button>
@@ -108,6 +152,7 @@ const SidebarComponent = {
     },
 
     buildSimpleCategory: function(title, items, activePage, prefix) {
+        if (!items || !items.length) return '';
         return `
             <div class="mb-6">
                 <p class="sidebar-category px-6 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3 sidebar-text">${title}</p>
@@ -117,9 +162,11 @@ const SidebarComponent = {
     },
 
     buildAccordion: function(title, id, iconName, items, activePage, prefix) {
-        const isOpen = items.some(i => i.link.includes(activePage));
-        const contentClass = isOpen ? 'category-content open' : 'category-content';
-        const iconRotate = isOpen ? 'rotate-180' : '';
+        if (!items || !items.length) return '';
+        const isActive = items.some(i => i.link.includes(activePage));
+        const contentClass = isActive ? 'category-content open' : 'category-content';
+        const iconRotate = isActive ? 'rotate-180' : '';
+        const initialHeight = isActive ? 'none' : '0';
 
         return `
             <div class="category-group">
@@ -130,7 +177,7 @@ const SidebarComponent = {
                     </div>
                     <i data-lucide="chevron-down" class="chevron-icon w-3.5 h-3.5 text-slate-500 transition-transform ${iconRotate}" id="icon-${id}"></i>
                 </button>
-                <div id="${id}" class="${contentClass}">
+                <div id="${id}" class="${contentClass}" style="max-height: ${initialHeight}">
                     ${items.map(item => this.buildLink(item, activePage, prefix)).join('')}
                 </div>
             </div>
@@ -139,7 +186,7 @@ const SidebarComponent = {
 
     buildLink: function(item, activePage, prefix) {
         const isActive = item.link.includes(activePage);
-        const activeClass = isActive ? 'sidebar-item-active text-white bg-white/5 border-r-4 border-[#c8d400]' : 'text-slate-400 hover:text-white hover:bg-white/5';
+        const activeClass = isActive ? 'sidebar-item-active text-white' : 'text-slate-400 hover:text-white hover:bg-white/5';
         
         return `
             <a href="${prefix}${item.link}" class="sidebar-item flex items-center px-8 py-3 text-[13px] ${activeClass} transition-all relative">
@@ -155,14 +202,12 @@ const SidebarComponent = {
         const icon = document.getElementById(`icon-${id}`);
         const body = document.body;
         
-        // Se a sidebar estiver colapsada e abrirmos uma categoria, expandimos a sidebar primeiro
         if (body.classList.contains('sidebar-collapsed')) this.toggleSidebar();
-        
         if (!target) return;
         
         if (target.classList.contains('open')) {
             target.classList.remove('open');
-            target.style.maxHeight = null;
+            target.style.maxHeight = '0';
             if (icon) icon.classList.remove('rotate-180');
             this.saveCategoryState(id, false);
         } else {
@@ -180,13 +225,8 @@ const SidebarComponent = {
         
         body.classList.toggle('sidebar-collapsed');
         
-        // Ajusta visualmente o container da sidebar via JS para garantir compatibilidade caso o CSS falhe
         if (sidebar) {
-            if (body.classList.contains('sidebar-collapsed')) {
-                sidebar.style.width = '80px';
-            } else {
-                sidebar.style.width = '288px'; // 72 no Tailwind (w-72)
-            }
+            sidebar.style.width = body.classList.contains('sidebar-collapsed') ? '80px' : '288px';
         }
 
         if (icon && window.lucide) {
@@ -201,6 +241,7 @@ const SidebarComponent = {
             const prefix = this.getRelativePrefix();
             if (window.supabaseClient) await window.supabaseClient.auth.signOut();
             sessionStorage.clear();
+            localStorage.removeItem('sidebarState');
             window.location.href = prefix + "index.html";
         }
     },
@@ -214,26 +255,34 @@ const SidebarComponent = {
     restoreSidebarState: function() {
         const state = JSON.parse(localStorage.getItem('sidebarState') || '{}');
         const body = document.body;
+        const activePage = window.location.pathname.split('/').pop();
 
-        // Restaura estado colapsado da sidebar se necessário
         if (body.classList.contains('sidebar-collapsed')) {
-            const icon = document.getElementById('sidebar-toggle-icon');
-            if (icon) icon.setAttribute('data-lucide', 'chevron-right');
             const sidebar = document.getElementById('sidebar-container');
             if (sidebar) sidebar.style.width = '80px';
+            const icon = document.getElementById('sidebar-toggle-icon');
+            if (icon) icon.setAttribute('data-lucide', 'chevron-right');
         }
 
-        Object.keys(state).forEach(id => {
-            if (state[id]) {
-                const content = document.getElementById(id);
-                const icon = document.getElementById(`icon-${id}`);
-                if (content) {
-                    content.classList.add('open');
-                    content.style.maxHeight = "none";
-                    if (icon) icon.classList.add('rotate-180');
-                }
+        const categories = ['cat-principal', 'cat-adm', 'cat-ped', 'cat-notas'];
+        categories.forEach(id => {
+            const content = document.getElementById(id);
+            const icon = document.getElementById(`icon-${id}`);
+            if (!content) return;
+
+            const hasActivePage = Array.from(content.querySelectorAll('a')).some(a => a.getAttribute('href').includes(activePage));
+            
+            if (hasActivePage || state[id]) {
+                content.classList.add('open');
+                content.style.maxHeight = "none";
+                if (icon) icon.classList.add('rotate-180');
+            } else {
+                content.classList.remove('open');
+                content.style.maxHeight = '0';
+                if (icon) icon.classList.remove('rotate-180');
             }
         });
+        
         if (window.lucide) lucide.createIcons();
     }
 };

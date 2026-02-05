@@ -134,7 +134,7 @@
     <div id="turmaModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-fmm-dark/60 backdrop-blur-sm p-4">
         <div class="bg-white w-full max-w-xl rounded-[32px] shadow-2xl flex flex-col animate-fade-in-up">
             
-            <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-white">
+            <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-[32px]">
                 <h2 class="text-2xl font-bold text-fmm-dark" id="modalTitle">Nova Turma</h2>
                 <button onclick="closeModal()" class="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-slate-100">
                     <i data-lucide="x" class="w-6 h-6"></i>
@@ -200,9 +200,18 @@
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html'; 
             
-            // Buscar permissões de nível do usuário
-            const { data: perfil } = await window.supabaseClient.from('perfis').select('niveis_acesso').eq('id', user.id).single();
-            userLevels = perfil?.niveis_acesso || ['EF1', 'EF2', 'EMT']; 
+            // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+            const { data: profile } = await window.supabaseClient.from('perfis').select('cargo, niveis_acesso').eq('id', user.id).single();
+            
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            } else {
+                userLevels = ['EF1', 'EF2', 'EMT'];
+            }
 
             // Inicializar Sidebar Componentizada
             await SidebarComponent.render('sidebar-container');
@@ -214,6 +223,7 @@
         }
 
         function filterNivelOptions() {
+            // Filtra o select da listagem
             const select = document.getElementById('filterNivel');
             Array.from(select.options).forEach(opt => {
                 if (opt.value && !userLevels.includes(opt.value)) {
@@ -222,13 +232,25 @@
                 }
             });
             
+            // Filtra o select do modal de cadastro
             const modalSelect = document.getElementById('inNivel');
             Array.from(modalSelect.options).forEach(opt => {
-                if (!userLevels.includes(opt.value.split(' ')[0])) {
+                if (!userLevels.includes(opt.value.substring(0, 3))) {
                      opt.hidden = true;
                      opt.disabled = true;
                 }
             });
+
+            // Garante que o valor inicial do modal seja um permitido
+            if (!userLevels.includes(modalSelect.value.substring(0, 3))) {
+                for (let opt of modalSelect.options) {
+                    if (!opt.disabled) {
+                        modalSelect.value = opt.value;
+                        updateSeries();
+                        break;
+                    }
+                }
+            }
         }
 
         async function fetchTurmas() {
@@ -236,14 +258,19 @@
             const filtroNivel = document.getElementById('filterNivel').value;
             const body = document.getElementById('turmasTableBody');
             
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
             let query = window.supabaseClient.from('turmas').select('*');
             
             if (termo) query = query.ilike('nome', `%${termo}%`);
             
             if (filtroNivel) {
+                // Se um filtro foi selecionado (e o usuário tem acesso a ele), aplicamos
                 query = query.eq('nivel', filtroNivel);
             } else {
-                query = query.in('nivel', userLevels);
+                // Se não houver filtro, mostramos apenas os níveis que o usuário pode ver
+                if (userLevels.length > 0) {
+                    query = query.in('nivel', userLevels);
+                }
             }
 
             const { data, error } = await query.order('nome');
@@ -274,7 +301,6 @@
             if (nivel === 'EF1') {
                 serieSelect.innerHTML = '<option value="5º Ano">5º Ano</option>';
             } else if (nivel === 'EF2') {
-                // ATUALIZAÇÃO: Inclusão das Séries EF2 (6º ao 9º)
                 serieSelect.innerHTML = `
                     <option value="6º Ano">6º Ano</option>
                     <option value="7º Ano">7º Ano</option>
@@ -371,6 +397,14 @@
             document.getElementById('turmaModal').classList.add('hidden');
             editingId = null;
             document.getElementById('inNomeTurma').value = '';
+            // Reset para o primeiro nível permitido no fechamento para evitar estados inconsistentes
+            const modalSelect = document.getElementById('inNivel');
+            for(let opt of modalSelect.options) {
+                if(!opt.disabled) {
+                    modalSelect.value = opt.value;
+                    break;
+                }
+            }
             updateSeries();
             resetCursoButtons();
         }

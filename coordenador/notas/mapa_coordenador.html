@@ -225,7 +225,9 @@
             <!-- Header Compacto -->
             <div class="bg-fmm-dark p-6 flex justify-between items-center text-white relative">
                 <div class="flex items-center gap-5 relative z-10">
-                    <img id="modalAvatar" src="" class="w-16 h-16 rounded-xl border-2 border-white/20 bg-slate-800 object-cover shadow-lg">
+                    <div class="relative">
+                        <img id="modalAvatar" src="" class="w-16 h-16 rounded-xl border-2 border-white/20 bg-slate-800 object-cover shadow-lg">
+                    </div>
                     <div>
                         <h2 id="modalStudentName" class="text-xl md:text-2xl font-black leading-tight tracking-tight line-clamp-1">---</h2>
                         <div class="flex gap-3 text-[10px] font-bold uppercase tracking-widest text-fmm-lime mt-1 opacity-90">
@@ -259,7 +261,7 @@
                         </div>
                     </div>
 
-                    <!-- ÁREA TÉCNICA (Oculta se for Fundamental) -->
+                    <!-- ÁREA TÉCNICA -->
                     <div id="modalTechContainer" class="bg-white shadow-sm rounded-2xl overflow-hidden border border-slate-200">
                         <div class="bg-slate-50 px-4 py-2 border-b border-slate-100 flex items-center gap-2">
                             <span class="w-2 h-2 rounded-full bg-fmm-green"></span>
@@ -301,6 +303,14 @@
         let showRiskOnly = false;
         let searchTimeout = null;
         let isFundamental = false;
+        let userLevels = []; // Níveis autorizados
+
+        // Mapeamento de Séries por Nível
+        const seriesByLevel = {
+            'EF1': ['5º Ano'],
+            'EF2': ['6º Ano', '7º Ano', '8º Ano', '9º Ano'],
+            'EMT': ['1ª Série', '2ª Série', '3ª Série']
+        };
 
         const TECH_CURRICULUM = {
             '1ª Série': { 1: ['AMC', 'CEI', 'PC', 'TM'], 2: ['CE', 'M3DMA', 'PMF', 'POO', 'DP'] },
@@ -320,16 +330,27 @@
         }
 
         async function init() {
-            if(window.SidebarComponent) await window.SidebarComponent.render('sidebar-container');
+            if(window.SidebarComponent) await SidebarComponent.render('sidebar-container');
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html';
+
+            // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+            const { data: profile } = await window.supabaseClient.from('perfis').select('cargo, niveis_acesso').eq('id', user.id).single();
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            }
 
             await loadMetadata();
             lucide.createIcons();
         }
 
         async function loadMetadata() {
-            const { data: turmas } = await window.supabaseClient.from('turmas').select('*').order('nome');
+            // Busca apenas turmas autorizadas para este coordenador
+            const { data: turmas } = await window.supabaseClient.from('turmas').select('*').in('nivel', userLevels).order('nome');
             const select = document.getElementById('classSelector');
             if (turmas) {
                 turmas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { numeric: true }));
@@ -344,9 +365,22 @@
             }
 
             const { data: discs } = await window.supabaseClient.from('disciplinas').select('*').order('nome');
+            
+            // --- FILTRAGEM DE DISCIPLINAS POR NÍVEL AUTORIZADO ---
+            let allowedSeries = [];
+            userLevels.forEach(lvl => { if(seriesByLevel[lvl]) allowedSeries.push(...seriesByLevel[lvl]); });
+
             const visibleDiscs = discs ? discs.filter(d => !HIDDEN_SUBJECTS.includes(d.sigla)) : [];
-            basicSubjects = visibleDiscs.filter(d => d.tipo === 'BCC').map(d => ({ ...d, shortName: d.sigla }));
-            techSubjects = visibleDiscs.filter(d => d.tipo === 'Técnica').map(d => ({ ...d, shortName: d.sigla }));
+            
+            basicSubjects = visibleDiscs.filter(d => 
+                d.tipo === 'BCC' && 
+                (!d.series || d.series.length === 0 || d.series.some(s => allowedSeries.includes(s)))
+            ).map(d => ({ ...d, shortName: d.sigla }));
+
+            techSubjects = visibleDiscs.filter(d => 
+                d.tipo === 'Técnica' && 
+                (!d.series || d.series.length === 0 || d.series.some(s => allowedSeries.includes(s)))
+            ).map(d => ({ ...d, shortName: d.sigla }));
         }
 
         function updatePeriodNavigation() {
@@ -403,7 +437,7 @@
                     fetchPromises = [
                         window.supabaseClient.from('notas_fundamental').select('*').in('id_matricula', ids),
                         window.supabaseClient.from('anual_fundamental').select('*').in('id_matricula', ids),
-                        Promise.resolve({ data: [] }) // Dummy TEC
+                        Promise.resolve({ data: [] })
                     ];
                 } else {
                     fetchPromises = [
@@ -459,7 +493,7 @@
             const isViewTech = currentView.includes('SEMESTRE_TEC');
 
             if (!isViewTech) {
-                columns = basicSubjects.map(s => ({ id: s.sigla, label: s.shortName, tooltip: s.nome, isTech: false }));
+                columns = basicSubjects.filter(s => !s.series || s.series.includes(currentSerie)).map(s => ({ id: s.sigla, label: s.shortName, tooltip: s.nome, isTech: false }));
             } else {
                 const sem = currentView === '1_SEMESTRE_TEC' ? 1 : 2;
                 const curriculo = TECH_CURRICULUM[currentSerie] || { 1: [], 2: [] };
@@ -597,7 +631,15 @@
             }
 
             const tbodyB = document.getElementById('modalGradesBody');
-            tbodyB.innerHTML = Object.entries(student.gradesBCC).map(([sigla, g]) => {
+            const sel = document.getElementById('classSelector');
+            const currentSerie = sel.options[sel.selectedIndex]?.dataset.serie || '1ª Série';
+
+            tbodyB.innerHTML = Object.entries(student.gradesBCC)
+                .filter(([sigla, _]) => {
+                    const sub = basicSubjects.find(s => s.sigla === sigla);
+                    return !sub.series || sub.series.includes(currentSerie);
+                })
+                .map(([sigla, g]) => {
                 const sub = basicSubjects.find(s => s.sigla === sigla);
                 const fmt = (v) => (v !== null && v !== undefined && v !== 0) ? Number(v).toFixed(1) : '-';
                 const cls = (v) => (v > 0 && v < 6.0) ? 'text-red-500 font-black' : (v >= 6.0 ? 'text-fmm-blue font-bold' : 'text-slate-300');

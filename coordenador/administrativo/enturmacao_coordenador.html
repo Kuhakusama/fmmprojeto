@@ -100,7 +100,7 @@
             </div>
         </header>
 
-        <!-- ABA 1: ENTURMAÇÃO GERAL (CÓDIGO ORIGINAL) -->
+        <!-- ABA 1: ENTURMAÇÃO GERAL -->
         <div id="view-geral" class="flex-1 p-8 flex flex-col gap-6 overflow-hidden">
             <div class="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex items-center gap-6">
                 <div class="flex flex-col gap-1 min-w-[250px]">
@@ -237,7 +237,7 @@
         </div>
     </div>
 
-    <!-- MODAL DE ZOOM DA FOTO (ORIGINAL) -->
+    <!-- MODAL DE ZOOM DA FOTO -->
     <div id="photoZoomModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4" onclick="closePhotoZoom()">
         <div class="relative animate-fade-in-up" onclick="event.stopPropagation()">
             <button onclick="closePhotoZoom()" class="absolute -top-12 -right-4 text-white hover:text-fmm-lime transition-colors">
@@ -249,27 +249,22 @@
     </div>
 
     <script>
-        // --- VARIÁVEIS ORIGINAIS + NOVAS ---
         let todasTurmas = [];
         let todosAlunos = [];
         let turmaAtualId = "";
         let userLevels = [];
         
-        // Novas para Inglês
         let currentSubturmas = [];
         let professorsList = [];
         let alunosNaTurmaPai = [];
 
-        // --- FUNÇÕES DE INTERFACE ---
         function switchView(view) {
             document.getElementById('view-geral').classList.toggle('hidden', view !== 'geral');
             document.getElementById('view-ingles').classList.toggle('hidden', view !== 'ingles');
-            
             document.getElementById('btn-tab-geral').classList.toggle('active', view === 'geral');
             document.getElementById('btn-tab-ingles').classList.toggle('active', view === 'ingles');
         }
 
-        // --- FUNÇÕES ORIGINAIS (MANTIDAS) ---
         function formatDriveUrl(url) {
             if (!url) return null;
             if (url.includes('drive.google.com') && url.includes('/file/d/')) {
@@ -295,23 +290,39 @@
             const { data: { user } } = await supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html'; 
             
-            const { data: perfil } = await supabaseClient.from('perfis').select('niveis_acesso').eq('id', user.id).single();
-            userLevels = perfil?.niveis_acesso || ['EF1', 'EF2', 'EMT'];
+            // --- LÓGICA DE CAPTURA DE CONTEXTO ---
+            const { data: profile } = await window.supabaseClient
+                .from('perfis')
+                .select('cargo, niveis_acesso')
+                .eq('id', user.id)
+                .single();
+
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            }
 
             await SidebarComponent.render('sidebar-container');
 
             try {
+                // Busca todas as turmas e filtra pelos níveis do coordenador
                 const { data: turmas } = await supabaseClient.from('turmas').select('*').order('nome');
                 todasTurmas = turmas ? turmas.filter(t => userLevels.includes(t.nivel)) : [];
                 
                 const select = document.getElementById('selectTurma');
                 const selectIng = document.getElementById('selectTurmaIngles');
-                const options = todasTurmas.map(t => `<option value="${t.id}" data-serie="${t.serie}" data-nivel="${t.nivel}">${t.nome} - ${t.serie} ${t.nivel}</option>`).join('');
                 
-                select.innerHTML = '<option value="">Escolha uma turma...</option>' + options;
-                selectIng.innerHTML = '<option value="">Escolha uma turma...</option>' + options;
+                // Popula os seletores de turma com as opções filtradas
+                const optionsHTML = '<option value="">Escolha uma turma...</option>' + 
+                    todasTurmas.map(t => `<option value="${t.id}" data-serie="${t.serie}" data-nivel="${t.nivel}">${t.nome} - ${t.serie} ${t.nivel}</option>`).join('');
                 
-                // Professores para Inglês
+                select.innerHTML = optionsHTML;
+                selectIng.innerHTML = optionsHTML;
+                
+                // Carrega lista de professores
                 const { data: profs } = await window.supabaseClient.from('perfis').select('id, nome_completo').eq('cargo', 'professor').order('nome_completo');
                 professorsList = profs || [];
 
@@ -356,7 +367,7 @@
 
             const btn = mode === 'add' 
                 ? `<button onclick="moverParaTurma('${aluno.ra}')" class="p-2 text-fmm-blue hover:bg-fmm-blue hover:text-white rounded-xl transition-all opacity-0 group-hover:opacity-100"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>`
-                : `<button onclick="removerDaTurma('${aluno.ra}')" class="p-2 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all opacity-0 group-hover:opacity-100"><i data-lucide="minus-circle" class="w-4 h-4"></i></button>`;
+                : `<button onclick="removerDaTurma('${aluno.ra}')" class="p-2 text-red-400 hover:bg-red-50 hover:text-white rounded-xl transition-all opacity-0 group-hover:opacity-100"><i data-lucide="minus-circle" class="w-4 h-4"></i></button>`;
 
             return `
                 <div class="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-2xl hover:border-fmm-blue/30 transition-all shadow-sm group">
@@ -406,8 +417,6 @@
             }
         }
 
-        // --- LÓGICA DE INGLÊS (NOVA) ---
-
         async function handleTurmaInglesChange() {
             const sel = document.getElementById('selectTurmaIngles');
             const turmaId = sel.value;
@@ -421,7 +430,6 @@
             const opt = sel.options[sel.selectedIndex];
             const isThird = opt.dataset.serie === '3ª Série';
             
-            // Busca subturmas
             const { data: subs } = await window.supabaseClient.from('subturmas').select('*').eq('id_turma_origem', turmaId);
             currentSubturmas = subs || [];
 
@@ -430,7 +438,6 @@
                 return;
             }
 
-            // UI Setup
             document.getElementById('inglesEmpty').classList.add('hidden');
             document.getElementById('inglesContainer').classList.remove('hidden');
             document.getElementById('inglesActions').classList.remove('hidden');
@@ -442,7 +449,6 @@
             document.getElementById('prof-group-a').innerText = professorsList.find(p => p.id === currentSubturmas[0]?.id_professor)?.nome_completo || 'Sem Prof.';
             document.getElementById('prof-group-b').innerText = professorsList.find(p => p.id === currentSubturmas[1]?.id_professor)?.nome_completo || 'Sem Prof.';
 
-            // Alunos
             const { data: alTurma } = await window.supabaseClient.from('alunos').select('ra, nome_completo, id_subturma_ingles').eq('id_turma', turmaId).eq('status', 'Cursando').order('nome_completo');
             alunosNaTurmaPai = alTurma || [];
             renderInglesColumns();

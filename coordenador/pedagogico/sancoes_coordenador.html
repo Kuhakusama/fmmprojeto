@@ -262,6 +262,7 @@
         let editingSanctionId = null;
         let searchTimeout = null;
         let latestRequestTimestamp = 0;
+        let userLevels = []; // Níveis permitidos ao coordenador
 
         function formatDriveUrl(url) {
             if (!url) return null;
@@ -280,6 +281,13 @@
             if(user) {
                  const { data: profile } = await window.supabaseClient.from('perfis').select('*').eq('id', user.id).single();
                  currentUser = profile;
+
+                 // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+                 if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                 } else {
+                    userLevels = profile.niveis_acesso || [];
+                 }
             }
 
             const reasonSelect = document.getElementById('sanctionReason');
@@ -309,7 +317,14 @@
             grid.innerHTML = '';
             if(empty) empty.classList.add('hidden');
 
-            let query = window.supabaseClient.from('alunos').select('ra, nome_completo, url_foto').limit(60);
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            // Usamos inner join com turmas para filtrar pelo nível autorizado
+            let query = window.supabaseClient.from('alunos').select('ra, nome_completo, url_foto, turmas!inner(nivel)').limit(60);
+            
+            if (userLevels.length > 0) {
+                query = query.in('turmas.nivel', userLevels);
+            }
+
             if(filterVal && filterVal.length >= 2) query = query.or(`nome_completo.ilike.%${filterVal}%,ra.ilike.%${filterVal}%`);
 
             const { data: students, error } = await query.order('nome_completo');
@@ -565,7 +580,7 @@
         }
         function closePhotoZoom() { document.getElementById('photoModal').classList.add('hidden'); }
         function toggleSidebar() { if(window.SidebarComponent) SidebarComponent.toggleSidebar(); }
-        async function logout() { if(window.SidebarComponent) SidebarComponent.logout(); }
+        async function logout() { if(confirm("Deseja sair do sistema?")) { await window.supabaseClient.auth.signOut(); window.location.href = "../../index.html"; } }
         window.onload = init;
     </script>
 </body>

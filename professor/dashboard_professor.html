@@ -201,8 +201,6 @@
     </main>
 
     <script>
-        
-
         let currentUser = null;
 
         async function init() {
@@ -286,29 +284,32 @@
             document.getElementById('stat-turmas').innerText = uniqueTurmas.size;
 
             // 3. Determinar Turma Atual (Tempo Real Manaus)
-             const { day, period } = getCurrentPeriod();
+            const { day, period } = getCurrentPeriod();
             const currentClassName = document.getElementById('current-class-name');
             const currentClassDisc = document.getElementById('current-class-disc');
 
-             // Precisamos buscar os detalhes da grade para o tempo atual
-             const { data: currentGrade } = await window.supabaseClient
+            // --- LÓGICA DE MULTI-TURMA (DOCÊNCIA COMPARTILHADA) ---
+            const { data: currentGrades } = await window.supabaseClient
                 .from('grade_horaria')
                 .select('turmas(nome), disciplinas(nome), sigla_disciplina')
                 .eq('id_professor', profId)
                 .eq('dia_semana', day)
-                .eq('numero_tempo', period?.p) // period pode ser undefined
-                .maybeSingle();
+                .eq('numero_tempo', period?.p);
 
             if (day === 'SAB' || day === 'DOM') {
                 currentClassName.innerText = "Fim de Semana";
                 currentClassDisc.innerText = "";
-            } else if (!period || period.break || period.lunch) { // Corrigido para verificar break/lunch
+            } else if (!period || period.break || period.lunch) {
                  currentClassName.innerText = (period && (period.break || period.lunch)) ? "Intervalo" : "Fora de Horário";
                  currentClassDisc.innerText = "";
             } else {
-                if (currentGrade) {
-                    currentClassName.innerText = currentGrade.turmas ? currentGrade.turmas.nome : "Atividade";
-                    currentClassDisc.innerText = `| ${currentGrade.disciplinas?.nome || currentGrade.sigla_disciplina}`;
+                if (currentGrades && currentGrades.length > 0) {
+                    // Mapeia todos os nomes de turmas e disciplinas únicos
+                    const turmasNomes = Array.from(new Set(currentGrades.map(g => g.turmas?.nome || "Atividade")));
+                    const disciplinasNomes = Array.from(new Set(currentGrades.map(g => g.disciplinas?.nome || g.sigla_disciplina)));
+                    
+                    currentClassName.innerText = turmasNomes.join(', ');
+                    currentClassDisc.innerText = `| ${disciplinasNomes.join(' / ')}`;
                 } else {
                     currentClassName.innerText = "Sem aula agora";
                     currentClassDisc.innerText = "";
@@ -342,12 +343,11 @@
             times.forEach(item => {
                 if (item.break || item.lunch) {
                     const label = item.break ? `Lanche (${item.break})` : `Almoço (${item.lunch})`;
-                    // Classes inline para evitar dependência de CSS externo que pode não estar carregado
                     html += `<div class="col-span-6 p-2 text-center text-[10px] font-bold uppercase tracking-widest ${item.break ? 'bg-amber-50 text-amber-600 border-b border-amber-100' : 'bg-green-50 text-green-600 border-b border-green-100'}">${label}</div>`;
                 } else {
                     html += `<div class="p-2 border-r border-b border-slate-100 flex items-center justify-center bg-slate-50 font-bold text-[10px] text-slate-500">${item.start}</div>`;
                     days.forEach(day => {
-                        html += `<div class="p-1 border-r border-b border-slate-100 min-h-[60px]" id="${day}-${item.p}"></div>`;
+                        html += `<div class="p-1 border-r border-b border-slate-100 min-h-[60px] flex flex-col gap-1" id="${day}-${item.p}"></div>`;
                     });
                 }
             });
@@ -383,8 +383,9 @@
                     const disciplinaNome = item.disciplinas?.nome || extraNames[item.sigla_disciplina] || item.sigla_disciplina;
                     const turmaNome = item.turmas?.nome || '---';
 
-                    cell.innerHTML = `
-                        <div class="h-full w-full rounded-lg p-2 flex flex-col justify-center border-l-4 animate-fade-in-up" style="border-left-color: ${cor}; background-color: ${cor}15">
+                    // --- AJUSTE: APPEND PARA PERMITIR MULTI-TURMA NO MESMO BLOCO ---
+                    cell.innerHTML += `
+                        <div class="w-full rounded-lg p-2 flex flex-col justify-center border-l-4 animate-fade-in-up" style="border-left-color: ${cor}; background-color: ${cor}15">
                             <span class="text-[10px] font-black uppercase truncate leading-tight text-slate-700" title="${turmaNome}">
                                 ${turmaNome}
                             </span>

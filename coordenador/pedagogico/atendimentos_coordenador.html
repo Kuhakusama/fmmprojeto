@@ -248,13 +248,11 @@
     </div>
 
     <script>
-        // CONFIGURAÇÃO SUPABASE
-        
-
         let currentUser = null;
         let allStudents = [];
         let selectedStudent = null;
         let currentRecords = [];
+        let userLevels = []; // Níveis permitidos ao coordenador
 
         function formatDriveUrl(url) {
             if (!url) return null;
@@ -273,6 +271,13 @@
             if(user) {
                 const { data: profile } = await window.supabaseClient.from('perfis').select('*').eq('id', user.id).single();
                 currentUser = profile;
+
+                // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
             }
 
             document.getElementById('recDate').valueAsDate = new Date();
@@ -281,10 +286,18 @@
         }
 
         async function fetchAllStudents() {
-            const { data, error } = await window.supabaseClient
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            // Usamos inner join com turmas para filtrar pelo nível autorizado
+            let query = window.supabaseClient
                 .from('alunos')
-                .select('ra, nome_completo, url_foto, turmas(nome)')
+                .select('ra, nome_completo, url_foto, turmas!inner(nome, nivel)')
                 .order('nome_completo');
+            
+            if (userLevels.length > 0) {
+                query = query.in('turmas.nivel', userLevels);
+            }
+
+            const { data, error } = await query;
             
             if (error) return console.error(error);
             allStudents = data || [];
@@ -353,7 +366,7 @@
 
             const { data: records, error } = await window.supabaseClient
                 .from('atendimentos')
-                .select('*, perfis(nome_completo)') // assumindo que 'autor_id' é FK para 'perfis'
+                .select('*, perfis(nome_completo)') 
                 .eq('aluno_ra', selectedStudent.ra)
                 .order('data_atendimento', { ascending: false });
 
@@ -465,7 +478,7 @@
                 if(error) throw error;
                 
                 closeRecordModal();
-                fetchTimeline();
+                await fetchTimeline();
             } catch (err) {
                 console.error(err);
                 alert("Erro ao salvar: " + err.message);
@@ -484,12 +497,12 @@
         // ZOOM UTILS
         function openPhotoZoom() {
             if(!selectedStudent) return;
-            const modal = document.getElementById('photoZoomModal');
+            const modal = document.getElementById('photoModal');
             document.getElementById('enlargedPhoto').src = document.getElementById('profileAvatar').src;
             document.getElementById('enlargedName').innerText = selectedStudent.nome_completo;
             modal.classList.remove('hidden');
         }
-        function closePhotoZoom() { document.getElementById('photoZoomModal').classList.add('hidden'); }
+        function closePhotoZoom() { document.getElementById('photoModal').classList.add('hidden'); }
 
         window.onload = init;
     </script>

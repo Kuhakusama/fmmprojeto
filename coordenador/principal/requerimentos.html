@@ -321,10 +321,25 @@
         let selectedRequest = null;
         let calendarData = [];
         let currentView = 'student';
+        let userLevels = []; // Níveis permitidos ao coordenador
 
         // --- INIT ---
         async function init() {
             if(window.SidebarComponent) await SidebarComponent.render('sidebar-container');
+            
+            const { data: { user } } = await window.supabaseClient.auth.getUser();
+            if (!user) return window.location.href = '../../index.html';
+
+            // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+            const { data: profile } = await window.supabaseClient.from('perfis').select('cargo, niveis_acesso').eq('id', user.id).single();
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            }
+
             lucide.createIcons();
             await loadDisciplinas();
             await loadRequests();
@@ -350,12 +365,19 @@
         // --- LÓGICA DE REQUERIMENTOS ---
         async function loadRequests() {
             const statusFilter = document.getElementById('filterStatus').value;
+            
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            // Usamos inner join com turmas para filtrar pelo nível autorizado
             let query = window.supabaseClient
                 .from('justificativas_ausencia')
-                .select(`*, alunos(nome_completo, url_foto, turmas(nome))`)
+                .select(`*, alunos!inner(nome_completo, url_foto, turmas!inner(nome, nivel))`)
                 .order('criado_em', { ascending: false });
 
             if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+            
+            if (userLevels.length > 0) {
+                query = query.in('nivel_aluno', userLevels);
+            }
 
             const { data, error } = await query;
             if (error) return console.error(error);
@@ -541,7 +563,21 @@
         // --- CALENDÁRIO ---
         async function openCalendarModal() { document.getElementById('calendarModal').classList.remove('hidden'); await loadCalendar(); renderCalendar(); }
         function closeCalendarModal() { document.getElementById('calendarModal').classList.add('hidden'); }
-        async function loadCalendar() { const { data } = await window.supabaseClient.from('calendario_referencia_provas').select('*, disciplinas(nome)').order('data_prova', { ascending: false }); calendarData = data || []; }
+        async function loadCalendar() { 
+            // Filtra o calendário pelas matrizes permitidas
+            let allowedMatrices = [];
+            if (userLevels.includes('EF1') || userLevels.includes('EF2')) allowedMatrices.push('Fundamental');
+            if (userLevels.includes('EMT')) { allowedMatrices.push('Básica'); allowedMatrices.push('Técnica'); }
+
+            let query = window.supabaseClient.from('calendario_referencia_provas').select('*, disciplinas(nome)').order('data_prova', { ascending: false });
+            
+            if (allowedMatrices.length > 0) {
+                query = query.in('matriz', allowedMatrices);
+            }
+
+            const { data } = await query;
+            calendarData = data || []; 
+        }
         
         function updateCalEtapa() {
             const m = document.getElementById('calMatriz').value;

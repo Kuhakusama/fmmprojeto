@@ -199,7 +199,7 @@
         </div>
     </div>
 
-    <!-- MODAL NOVO REGISTO (Mantido) -->
+    <!-- MODAL NOVO REGISTO -->
     <div id="recordModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-fmm-dark/60 backdrop-blur-sm p-4">
         <div class="bg-white w-full max-w-lg rounded-[32px] shadow-2xl flex flex-col animate-fade-in-up max-h-[90vh]">
             <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-[32px]">
@@ -270,14 +270,12 @@
     </div>
 
     <script>
-        // CONFIGURAÇÃO SUPABASE
-        
-
         let currentUser = null;
         let allStudents = [];
         let selectedStudent = null;
         let currentRecords = [];
-        let globalAlertsList = []; // Lista de todos os alunos com alerta
+        let globalAlertsList = []; 
+        let userLevels = []; // Níveis permitidos ao coordenador
 
         function formatDriveUrl(url) {
             if (!url) return null;
@@ -296,6 +294,13 @@
             if(user) {
                 const { data: profile } = await window.supabaseClient.from('perfis').select('*').eq('id', user.id).single();
                 currentUser = profile;
+
+                // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
             }
 
             document.getElementById('recDate').valueAsDate = new Date();
@@ -305,10 +310,17 @@
         }
 
         async function fetchAllStudents() {
-            const { data, error } = await window.supabaseClient
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            let query = window.supabaseClient
                 .from('alunos')
-                .select('ra, nome_completo, url_foto, turmas(nome)')
+                .select('ra, nome_completo, url_foto, turmas!inner(nome, nivel)')
                 .order('nome_completo');
+            
+            if (userLevels.length > 0) {
+                query = query.in('turmas.nivel', userLevels);
+            }
+
+            const { data, error } = await query;
             
             if (error) return console.error(error);
             allStudents = data || [];
@@ -421,23 +433,25 @@
             lucide.createIcons();
         }
 
-        // --- LÓGICA DE ALERTA GLOBAL (Atrasos >= 3 no mês) ---
         async function checkGlobalAlerts(showModal = false) {
             const btnAlerts = document.getElementById('btnAlerts');
             const alertCount = document.getElementById('alertCount');
             const listContainer = document.getElementById('alertsList');
             
-            // 1. Buscar todos os atrasos de todos os alunos (Otimização: Filtrar por ano atual idealmente)
-            // Para simplificar e garantir precisão, buscamos tudo e processamos no JS. 
-            // Em produção com muitos dados, isso deve ser uma View SQL ou RPC function.
-            const { data: allDelays, error } = await window.supabaseClient
+            // Filtramos atrasos apenas de alunos que pertencem ao nível autorizado
+            let query = window.supabaseClient
                 .from('atrasos')
-                .select('aluno_ra, data_atraso, alunos(nome_completo, turmas(nome))');
+                .select('aluno_ra, data_atraso, alunos!inner(nome_completo, turmas!inner(nome, nivel))');
+
+            if (userLevels.length > 0) {
+                query = query.in('alunos.turmas.nivel', userLevels);
+            }
+
+            const { data: allDelays, error } = await query;
 
             if (error || !allDelays) return;
 
-            // 2. Agrupar por Aluno + Mês
-            const alertsMap = {}; // Chave: RA-ANO-MES
+            const alertsMap = {}; 
             
             allDelays.forEach(d => {
                 const datePart = d.data_atraso.split('T')[0];
@@ -456,10 +470,8 @@
                 alertsMap[key].count++;
             });
 
-            // 3. Filtrar quem tem >= 3
             globalAlertsList = Object.values(alertsMap).filter(item => item.count >= 3);
 
-            // 4. Atualizar Botão
             if (globalAlertsList.length > 0) {
                 btnAlerts.classList.remove('hidden');
                 alertCount.innerText = globalAlertsList.length;
@@ -467,7 +479,6 @@
                 btnAlerts.classList.add('hidden');
             }
 
-            // 5. Se solicitado, abrir modal e renderizar lista
             if (showModal) {
                 listContainer.innerHTML = '';
                 if (globalAlertsList.length === 0) {
@@ -502,7 +513,6 @@
             checkGlobalAlerts(true);
         }
 
-        // --- CRUD ---
         function openNewRecordModal() {
             openRecordModal(null);
         }
@@ -512,7 +522,6 @@
             const btnDelete = document.getElementById('btnDelete');
             const title = modal.querySelector('h2');
             
-            // Reset
             document.getElementById('recDate').valueAsDate = new Date();
             document.getElementById('recTime').value = new Date().toTimeString().substring(0, 5);
             document.getElementById('recReason').value = '';
@@ -572,7 +581,7 @@
                 showToast("Atraso registado com sucesso!");
                 closeRecordModal();
                 fetchHistory();
-                checkGlobalAlerts(false); // Atualiza o contador global
+                checkGlobalAlerts(false); 
             } catch (err) {
                 console.error(err);
                 alert("Erro ao salvar: " + err.message);
@@ -593,10 +602,9 @@
             showToast("Registo removido");
             closeRecordModal();
             fetchHistory();
-            checkGlobalAlerts(false); // Atualiza o contador global
+            checkGlobalAlerts(false); 
         }
 
-        // --- UTILITÁRIOS ---
         function openPhotoZoom() {
             if(!selectedStudent) return;
             const modal = document.getElementById('photoModal');
@@ -614,7 +622,6 @@
             setTimeout(() => { t.classList.replace('opacity-100', 'opacity-0'); t.classList.replace('translate-y-0', 'translate-y-20'); }, 2500);
         }
 
-        // --- STUBS DO SIDEBAR ---
         function toggleSidebar() { if(window.SidebarComponent) SidebarComponent.toggleSidebar(); }
         function toggleCategory(id) { if(window.SidebarComponent) SidebarComponent.toggleCategory(id); }
         async function logout() { if(window.SidebarComponent) SidebarComponent.logout(); }

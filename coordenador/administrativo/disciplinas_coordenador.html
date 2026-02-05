@@ -241,11 +241,34 @@
 
         let selectedTipo = "";
         let editingSigla = null;
+        let userLevels = []; // Níveis permitidos ao coordenador
+
+        // Mapeamento lógico de Níveis para Séries para facilitar o filtro
+        const seriesByLevel = {
+            'EF1': ['5º Ano'],
+            'EF2': ['6º Ano', '7º Ano', '8º Ano', '9º Ano'],
+            'EMT': ['1ª Série', '2ª Série', '3ª Série']
+        };
 
         async function init() {
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html'; 
             
+            // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+            const { data: profile } = await window.supabaseClient
+                .from('perfis')
+                .select('cargo, niveis_acesso')
+                .eq('id', user.id)
+                .single();
+
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            }
+
             await SidebarComponent.render('sidebar-container');
             await fetchDisciplinas();
             lucide.createIcons();
@@ -263,7 +286,20 @@
             const { data, error } = await query.order('nome');
             if (error) return;
 
-            body.innerHTML = data.map(d => {
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
+            // Criamos uma lista consolidada de todas as séries que o coordenador pode ver
+            let allowedSeries = [];
+            userLevels.forEach(lvl => {
+                if (seriesByLevel[lvl]) allowedSeries = allowedSeries.concat(seriesByLevel[lvl]);
+            });
+
+            // Filtramos as disciplinas: uma disciplina só aparece se ao menos uma de suas séries vinculadas estiver na lista permitida
+            const filteredData = data.filter(d => {
+                if (!d.series || d.series.length === 0) return true; // Se não tiver série, mostra (casos genéricos)
+                return d.series.some(s => allowedSeries.includes(s));
+            });
+
+            body.innerHTML = filteredData.map(d => {
                 const seriesText = d.series ? d.series.join(", ") : "N/A";
                 return `
                     <tr class="hover:bg-slate-50/80 transition-all group">

@@ -289,8 +289,6 @@
     </div>
 
     <script>
-        
-
         let currentMode = 'turma'; 
         let currentTargetCell = null, currentDay = null, currentPeriod = null;
         let localScheduleState = []; 
@@ -298,17 +296,35 @@
         let userLevels = [];
         let finderCurrentData = []; // Cache do snapshot atual para o buscador
 
+        // Mapeamento de Séries por Nível
+        const seriesByLevel = {
+            'EF1': ['5º Ano'],
+            'EF2': ['6º Ano', '7º Ano', '8º Ano', '9º Ano'],
+            'EMT': ['1ª Série', '2ª Série', '3ª Série']
+        };
+
         async function initGrade() {
             const { data: { user } } = await supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html'; 
             
-            const { data: perfil } = await supabaseClient.from('perfis').select('niveis_acesso').eq('id', user.id).single();
-            userLevels = perfil?.niveis_acesso || ['EF1', 'EF2', 'EMT'];
+            // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
+            const { data: profile } = await supabaseClient.from('perfis').select('cargo, niveis_acesso').eq('id', user.id).single();
+            
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            } else {
+                userLevels = ['EF1', 'EF2', 'EMT'];
+            }
 
             await SidebarComponent.render('sidebar-container');
             renderGradeSkeleton();
 
             try {
+                // Filtra turmas pelo nível autorizado
                 const { data: turmas } = await supabaseClient.from('turmas').select('*').order('nome');
                 listTurmas = turmas ? turmas.filter(t => userLevels.includes(t.nivel)) : [];
 
@@ -348,6 +364,7 @@
         function updatePrincipalSelector() {
             const select = document.getElementById('selectPrincipal');
             select.innerHTML = '<option value="">Selecionar...</option>';
+            
             if (currentMode === 'turma') {
                 listTurmas.forEach(t => {
                     const opt = document.createElement('option');
@@ -356,7 +373,28 @@
                     select.appendChild(opt);
                 });
             } else {
-                listProfessores.forEach(p => {
+                // --- LÓGICA DE FILTRAGEM DE PROFESSORES POR NÍVEL ---
+                
+                // 1. Identifica quais séries são permitidas
+                let allowedSeries = [];
+                userLevels.forEach(lvl => {
+                    if (seriesByLevel[lvl]) allowedSeries = allowedSeries.concat(seriesByLevel[lvl]);
+                });
+
+                // 2. Identifica quais disciplinas pertencem aos níveis permitidos
+                const allowedDisciplinasSiglas = listDisciplinasRegular
+                    .filter(d => d.series && d.series.some(s => allowedSeries.includes(s)))
+                    .map(d => d.sigla);
+
+                // 3. Identifica quais professores estão vinculados a essas disciplinas permitidas
+                const allowedProfIds = listVinculos
+                    .filter(v => allowedDisciplinasSiglas.includes(v.sigla_disciplina))
+                    .map(v => v.id_professor);
+
+                // 4. Filtra a lista mestre de professores
+                const filteredProfs = listProfessores.filter(p => allowedProfIds.includes(p.id));
+
+                filteredProfs.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id;
                     opt.innerText = p.nome_completo;
@@ -462,7 +500,6 @@
                 id_subturma: item.id_subturma
             }));
 
-            // Agrupar por célula para tratar aulas múltiplas (Inglês)
             const grouped = {};
             data.forEach(item => {
                 const key = `${item.dia_semana}-${item.numero_tempo}`;
@@ -539,7 +576,6 @@
 
         function closeModal() { document.getElementById('assignModal').classList.add('hidden'); }
 
-        // --- SALVAMENTO ATÔMICO PROTEGIDO ---
         async function confirmAssignment() {
             const sigla = document.getElementById('modalDisc').value;
             const principalId = document.getElementById('selectPrincipal').value;
@@ -551,7 +587,6 @@
             btn.innerText = "Salvando...";
 
             try {
-                // 1. LIMPEZA ATÔMICA: Remove apenas o que existia neste slot para esta turma/prof
                 let deleteQuery = supabaseClient.from('grade_horaria')
                     .delete()
                     .eq('dia_semana', currentDay)
@@ -563,7 +598,6 @@
                 const { error: delError } = await deleteQuery;
                 if (delError) throw delError;
 
-                // 2. PREPARAÇÃO DO PAYLOAD
                 let payload = [];
                 const disc = listDisciplinasRegular.find(d => d.sigla === sigla);
                 const isIngles = checkIsIngles(sigla, disc?.nome);
@@ -593,12 +627,10 @@
                     payload.push({ id_turma: turmaId, dia_semana: currentDay, numero_tempo: currentPeriod, sigla_disciplina: sigla, id_professor: profId, id_subturma: null });
                 }
 
-                // 3. INSERÇÃO
                 const { error: insError } = await supabaseClient.from('grade_horaria').insert(payload);
                 if (insError) throw insError;
 
-                // 4. ATUALIZAÇÃO DA UI
-                await handleSelectionChange(); // Recarrega do banco para garantir consistência visual
+                await handleSelectionChange();
                 closeModal();
 
             } catch (err) {
@@ -636,15 +668,6 @@
         function confirmRemoval() {
             clearSlot();
         }
-
-        // Função mantida por compatibilidade mas desencorajada pelo uso atômico
-        async function saveFullGrade() {
-            const principalId = document.getElementById('selectPrincipal').value;
-            if(!principalId) return alert("Selecione uma turma primeiro.");
-            alert("A grade é salva automaticamente a cada atribuição.");
-        }
-
-        // --- LÓGICA DO BUSCADOR DE PROFESSOR ---
 
         function getCurrentPeriod() {
             const now = new Date();
@@ -701,12 +724,14 @@
                 return;
             }
 
-            // Snapshot da Grade para o tempo atual
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL NO FINDER ---
+            // Buscamos apenas aulas em turmas que pertençam ao nível autorizado
             const { data, error } = await supabaseClient
                 .from('grade_horaria')
-                .select('*, perfis(nome_completo), turmas(nome), disciplinas(nome, sigla, tipo)')
+                .select('*, perfis(nome_completo), turmas!inner(nome, nivel), disciplinas(nome, sigla, tipo)')
                 .eq('dia_semana', currentDay)
-                .eq('numero_tempo', period.p);
+                .eq('numero_tempo', period.p)
+                .in('turmas.nivel', userLevels);
 
             if (error) {
                 results.innerHTML = '<p class="text-red-500">Erro ao consultar base.</p>';

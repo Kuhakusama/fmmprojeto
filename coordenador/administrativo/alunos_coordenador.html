@@ -44,6 +44,7 @@
         .category-content.open { max-height: 1000px; }
         .rotate-180 { transform: rotate(180deg); }
         .modal-content::-webkit-scrollbar { width: 6px; }
+        .modal-content::-webkit-scrollbar-track { background: transparent; }
         .modal-content::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }
@@ -226,6 +227,7 @@
 
     <script>
         let cachedAlunos = [];
+        let userLevels = []; // Níveis permitidos ao coordenador
 
         function formatDriveUrl(url) {
             if (!url) return null;
@@ -240,6 +242,22 @@
             if(window.SidebarComponent) await SidebarComponent.render('sidebar-container');
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html'; 
+
+            // --- LÓGICA DE CAPTURA DE CONTEXTO ---
+            const { data: profile } = await window.supabaseClient
+                .from('perfis')
+                .select('cargo, niveis_acesso')
+                .eq('id', user.id)
+                .single();
+
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            }
+
             await fetchAlunos();
             lucide.createIcons();
         }
@@ -250,20 +268,30 @@
             const filtroStatus = document.getElementById('filterStatus').value;
             const body = document.getElementById('studentTableBody');
             
-            let query = window.supabaseClient.from('alunos').select('*, turmas(nome)');
+            // --- LÓGICA DE FILTRAGEM POR NÍVEL (PLANO DE SEGMENTAÇÃO) ---
+            // Usamos !inner(nivel) para forçar o filtro na relação com turmas
+            let query = window.supabaseClient.from('alunos').select('*, turmas!inner(nome, nivel)');
+            
+            // Aplica restrição de nível se o usuário não for visão global (ex: coordenador de nível específico)
+            if (userLevels.length > 0) {
+                query = query.in('turmas.nivel', userLevels);
+            }
+
             if (termo) query = query.or(`nome_completo.ilike.%${termo}%,ra.ilike.%${termo}%`);
             if (filtroOrigem) query = query.eq('origem', filtroOrigem);
             if (filtroStatus) query = query.eq('status', filtroStatus);
 
             const { data, error } = await query.order('nome_completo');
-            if (error) return;
+            if (error) {
+                console.error("Erro na busca filtrada:", error);
+                return;
+            }
             
             cachedAlunos = data || [];
             document.getElementById('student-count').innerText = cachedAlunos.length;
             
             body.innerHTML = cachedAlunos.map(aluno => {
                 const formattedUrl = formatDriveUrl(aluno.url_foto);
-                // CORREÇÃO: Uso de aspas escapadas via entidade HTML no onerror para evitar SyntaxError no console
                 const avatar = aluno.url_foto 
                     ? `<img src="${formattedUrl}" class="avatar-frame cursor-pointer" onclick="openPhotoZoom('${formattedUrl}', '${aluno.nome_completo.replace(/'/g, "\\'")}')" onerror="this.outerHTML='<div class=&quot;avatar-frame flex items-center justify-center text-slate-400 font-bold text-xs bg-slate-100&quot;>${aluno.nome_completo.charAt(0)}</div>'">` 
                     : `<div class="avatar-frame flex items-center justify-center text-slate-400 font-bold text-xs bg-slate-100">${aluno.nome_completo.charAt(0)}</div>`;

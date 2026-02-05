@@ -83,7 +83,7 @@
             <div class="flex flex-col gap-1">
                 <label class="text-[9px] font-black text-fmm-blue uppercase tracking-widest ml-1">Filtrar Turma</label>
                 <select id="classFilter" onchange="fetchStudents()" class="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-fmm-blue outline-none shadow-sm">
-                    <option value="all">Todas as Turmas</option>
+                    <option value="all">Todas as Turmas Autorizadas</option>
                 </select>
             </div>
             <div class="relative group">
@@ -194,7 +194,6 @@
     <script>
         /**
          * ENGINE DO BOLETIM INDIVIDUAL - COORDENAÇÃO
-         * Suporta: Fundamental (Bimestral), Médio BCC (Trimestral) e Técnico (Semestral)
          */
         
         let allStudents = [];
@@ -203,6 +202,7 @@
         let currentStudent = null;
         let currentView = 'anual';
         let saveTimers = {};
+        let userLevels = []; // Níveis autorizados
 
         const HIDDEN_SUBJECTS = ['ATUAL', 'BIO.APL', 'FÍSICA.APL', 'GEO.APL', 'HIST.APL', 'L.ING', 'P.DESP', 'QUIM.APL'];
 
@@ -220,12 +220,23 @@
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html';
 
+            // --- CAPTURA DE CONTEXTO ---
+            const { data: profile } = await window.supabaseClient.from('perfis').select('cargo, niveis_acesso').eq('id', user.id).single();
+            if (profile) {
+                if (profile.cargo === 'diretor') {
+                    userLevels = ['EF1', 'EF2', 'EMT'];
+                } else {
+                    userLevels = profile.niveis_acesso || [];
+                }
+            }
+
             await loadInitialMetadata();
             lucide.createIcons();
         }
 
         async function loadInitialMetadata() {
-            const { data: turmas } = await window.supabaseClient.from('turmas').select('*').order('nome');
+            // Busca apenas turmas autorizadas para este coordenador
+            const { data: turmas } = await window.supabaseClient.from('turmas').select('*').in('nivel', userLevels).order('nome');
             const select = document.getElementById('classFilter');
             if (turmas) {
                 turmas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { numeric: true }));
@@ -248,27 +259,35 @@
         async function fetchStudents() {
             const classId = document.getElementById('classFilter').value;
             
+            // Usamos !inner para garantir que o filtro de nível seja respeitado na busca global
             let query = window.supabaseClient.from('matriculas')
-                .select('id, ra_aluno, turmas(nome, serie, nivel), alunos(ra, nome_completo, url_foto, email_institucional, status)')
+                .select('id, ra_aluno, turmas!inner(nome, serie, nivel), alunos(ra, nome_completo, url_foto, email_institucional, status)')
                 .eq('status', 'CURSANDO')
                 .eq('ano_letivo', 2026);
             
-            if (classId !== 'all') query = query.eq('id_turma', classId);
+            if (classId !== 'all') {
+                query = query.eq('id_turma', classId);
+            } else {
+                query = query.in('turmas.nivel', userLevels);
+            }
 
             const { data: matriculas } = await query;
             if (!matriculas) return;
 
-            allStudents = matriculas.map(m => ({
-                id: m.id,
-                ra: m.ra_aluno,
-                name: m.alunos.nome_completo,
-                email: m.alunos.email_institucional,
-                status: m.alunos.status,
-                className: m.turmas.nome,
-                serie: m.turmas.serie,
-                nivel: m.turmas.nivel,
-                avatar: formatDriveUrl(m.alunos.url_foto) || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.alunos.nome_completo)}&background=random&color=fff`
-            }));
+            // Mapeia para formato amigável filtrando nulos
+            allStudents = matriculas
+                .filter(m => m.alunos)
+                .map(m => ({
+                    id: m.id,
+                    ra: m.ra_aluno,
+                    name: m.alunos.nome_completo,
+                    email: m.alunos.email_institucional,
+                    status: m.alunos.status,
+                    className: m.turmas.nome,
+                    serie: m.turmas.serie,
+                    nivel: m.turmas.nivel,
+                    avatar: formatDriveUrl(m.alunos.url_foto) || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.alunos.nome_completo)}&background=random&color=fff`
+                }));
 
             allStudents.sort((a, b) => a.name.localeCompare(b.name));
             renderStudentList(allStudents);
@@ -276,6 +295,10 @@
 
         function renderStudentList(list) {
             const container = document.getElementById('studentList');
+            if (list.length === 0) {
+                container.innerHTML = `<div class="p-8 text-center text-slate-300 italic text-xs">Nenhum aluno localizado nos níveis autorizados.</div>`;
+                return;
+            }
             container.innerHTML = list.map(s => `
                 <div onclick="selectStudent('${s.ra}')" id="item-${s.ra}" class="student-item p-4 border-b border-slate-50 cursor-pointer flex items-center gap-4">
                     <img src="${s.avatar}" class="w-10 h-10 rounded-xl object-cover shadow-sm bg-slate-100">
@@ -308,7 +331,6 @@
             document.getElementById('headerAvatar').src = student.avatar;
             document.getElementById('headerStatus').innerText = student.status;
 
-            // Reinicia a visão para 'anual' ao trocar de aluno para evitar bugs de abas inexistentes
             currentView = 'anual';
             updateTabControls();
 
@@ -353,7 +375,7 @@
                 promises = [
                     window.supabaseClient.from('notas_fundamental').select('*').eq('id_matricula', matId),
                     window.supabaseClient.from('anual_fundamental').select('*').eq('id_matricula', matId),
-                    Promise.resolve({ data: [] }) // Dummy para TEC
+                    Promise.resolve({ data: [] }) 
                 ];
             } else {
                 promises = [
@@ -367,13 +389,6 @@
             currentStudent.grades = { BCC: nbT || [], ANUAL: nbA || [], TEC: ntT || [] };
         }
 
-        function switchView(view) {
-            currentView = view;
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById(`tab-${view}`)?.classList.add('active');
-            renderTable();
-        }
-
         function renderTable() {
             if (!currentStudent) return;
             const thead = document.getElementById('tableHead');
@@ -385,7 +400,6 @@
             thead.innerHTML = '';
 
             if (isTec) {
-                // RENDERIZAÇÃO TÉCNICA (S1 ou S2)
                 thead.innerHTML = `
                     <tr>
                         <th class="p-5 border-r border-white/5 rounded-tl-3xl">Componente Técnico</th>
@@ -394,7 +408,7 @@
                         <th class="p-3 text-center bg-slate-800/20">M1</th>
                         <th class="p-3 text-center border-r border-white/5">Recup. P</th>
                         <th class="p-3 text-center border-r border-white/5">Cons.</th>
-                        <th class="p-3 text-center bg-orange-600/20 text-orange-500 border-r border-white/5">Recup. F</th>
+                        <th class="p-3 text-center bg-orange-600/20 text-orange-50 border-r border-white/5">Recup. F</th>
                         <th class="p-3 text-center bg-fmm-green text-white rounded-tr-3xl">NOTA SEMESTRAL</th>
                     </tr>`;
 
@@ -422,17 +436,13 @@
                     tbody.appendChild(tr);
                 });
             } else if (currentView === 'anual') {
-                // RENDERIZAÇÃO ANUAL (FUNDAMENTAL OU MÉDIO)
-                const headers = isFundamental 
-                    ? ['B1', 'B2', 'B3', 'B4'] 
-                    : ['T1', 'T2', 'T3'];
-                
+                const headers = isFundamental ? ['B1', 'B2', 'B3', 'B4'] : ['T1', 'T2', 'T3'];
                 thead.innerHTML = `
                     <tr>
                         <th class="p-5 border-r border-white/5 rounded-tl-3xl">Disciplina</th>
                         ${headers.map(h => `<th class="p-3 text-center border-r border-white/5">${h}</th>`).join('')}
                         <th class="p-3 text-center bg-fmm-blue/20 text-fmm-blue">Média</th>
-                        <th class="p-3 text-center bg-orange-600/20 text-orange-500">Rec. F</th>
+                        <th class="p-3 text-center bg-orange-600/20 text-orange-50">Rec. F</th>
                         <th class="p-3 text-center bg-fmm-blue/20 text-fmm-blue border-r border-white/10">Cons.</th>
                         <th class="p-3 text-center bg-fmm-blue text-white font-black text-xs">M. FINAL</th>
                     </tr>`;
@@ -463,29 +473,26 @@
                     tbody.appendChild(tr);
                 });
             } else {
-                // RENDERIZAÇÃO PERIÓDICA (TRIMESTRE OU BIMESTRE)
                 const recLabel = isFundamental ? 'Recup. RB' : 'Recup. RT';
                 const totalLabel = isFundamental ? 'Nota Bimestral' : 'Nota Trimestral';
-                
                 thead.innerHTML = `
                     <tr>
                         <th class="p-5 border-r border-white/5 rounded-tl-3xl">Disciplina</th>
                         <th class="p-3 text-center border-r border-white/5">Prova 1 (P1)</th>
                         <th class="p-3 text-center border-r border-white/5">Prova 2 (P2)</th>
                         <th class="p-3 text-center bg-slate-800/20">M. Parcial</th>
-                        <th class="p-3 text-center bg-orange-600/20 text-orange-500 border-r border-white/5">${recLabel}</th>
+                        <th class="p-3 text-center bg-orange-600/20 text-orange-50 border-r border-white/5">${recLabel}</th>
                         <th class="p-3 text-center bg-fmm-blue text-white rounded-tr-3xl">${totalLabel}</th>
                     </tr>`;
 
                 basicSubjects.forEach(sub => {
                     if (sub.series && !sub.series.includes(currentStudent.serie)) return;
                     const g = currentStudent.grades.BCC.find(x => x.sigla_disciplina === sub.sigla && x.periodo === currentView) || { p1: 0, p2: 0, rt: 0, rb: 0, nt: 0, nb: 0 };
-                    
                     const tr = document.createElement('tr');
                     const mp = (Number(g.p1 || 0) + Number(g.p2 || 0)) / 2;
-                    const recVal = isFundamental ? g.rb : g.rt;
                     const totalVal = isFundamental ? g.nb : g.nt;
                     const recField = isFundamental ? 'rb' : 'rt';
+                    const recVal = isFundamental ? g.rb : g.rt;
 
                     tr.className = "hover:bg-slate-50 transition-colors";
                     tr.innerHTML = `
@@ -529,7 +536,6 @@
 
         async function saveGrade(sigla, field, val, type) {
             const isFundamental = currentStudent.nivel === 'EF1' || currentStudent.nivel === 'EF2';
-            
             let table, conflict;
             if (isFundamental) {
                 table = type === 'ANUAL' ? 'anual_fundamental' : 'notas_fundamental';
