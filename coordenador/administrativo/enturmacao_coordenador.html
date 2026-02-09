@@ -132,7 +132,7 @@
                         </div>
                         <div class="relative w-48">
                             <i data-lucide="search" class="absolute left-3 top-2 w-3.5 h-3.5 text-slate-400"></i>
-                            <input type="text" id="searchDisponivel" onkeyup="renderLists()" placeholder="Buscar aluno..." class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:ring-1 focus:ring-fmm-blue">
+                            <input type="text" id="searchDisponivel" onkeyup="handleAvailableSearch(this.value)" placeholder="Buscar aluno..." class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:ring-1 focus:ring-fmm-blue">
                         </div>
                     </div>
                     <div id="listDisponiveis" class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar"></div>
@@ -250,9 +250,11 @@
 
     <script>
         let todasTurmas = [];
-        let todosAlunos = [];
+        let alunosDisponiveis = []; // Apenas alunos sem turma (server-side query)
+        let alunosAlocados = [];    // Apenas alunos da turma selecionada
         let turmaAtualId = "";
         let userLevels = [];
+        let searchTimeout = null;
         
         let currentSubturmas = [];
         let professorsList = [];
@@ -290,7 +292,6 @@
             const { data: { user } } = await supabaseClient.auth.getUser();
             if (!user) return window.location.href = '../../index.html'; 
             
-            // --- LÓGICA DE CAPTURA DE CONTEXTO ---
             const { data: profile } = await window.supabaseClient
                 .from('perfis')
                 .select('cargo, niveis_acesso')
@@ -308,51 +309,94 @@
             await SidebarComponent.render('sidebar-container');
 
             try {
-                // Busca todas as turmas e filtra pelos níveis do coordenador
                 const { data: turmas } = await supabaseClient.from('turmas').select('*').order('nome');
                 todasTurmas = turmas ? turmas.filter(t => userLevels.includes(t.nivel)) : [];
                 
                 const select = document.getElementById('selectTurma');
                 const selectIng = document.getElementById('selectTurmaIngles');
                 
-                // Popula os seletores de turma com as opções filtradas
                 const optionsHTML = '<option value="">Escolha uma turma...</option>' + 
                     todasTurmas.map(t => `<option value="${t.id}" data-serie="${t.serie}" data-nivel="${t.nivel}">${t.nome} - ${t.serie} ${t.nivel}</option>`).join('');
                 
                 select.innerHTML = optionsHTML;
                 selectIng.innerHTML = optionsHTML;
                 
-                // Carrega lista de professores
                 const { data: profs } = await window.supabaseClient.from('perfis').select('id, nome_completo').eq('cargo', 'professor').order('nome_completo');
                 professorsList = profs || [];
 
-                await fetchAlunos();
+                // Carga inicial (Alunos Disponíveis)
+                await fetchAlunosDisponiveis();
             } catch (err) { console.error(err); }
         }
 
-        async function fetchAlunos() {
-            const { data: alunos } = await supabaseClient.from('alunos').select('*').order('nome_completo');
-            todosAlunos = alunos || [];
+        // --- CORE: LÓGICA DE CARREGAMENTO ESCALÁVEL (> 1500 ALUNOS) ---
+
+        /**
+         * Busca alunos sem turma com suporte a busca server-side (evita limite de 1000)
+         */
+        async function fetchAlunosDisponiveis(termo = '') {
+            let query = supabaseClient
+                .from('alunos')
+                .select('ra, nome_completo, url_foto, id_turma, id_subturma_ingles')
+                .is('id_turma', null)
+                .order('nome_completo')
+                .limit(200); // Mostra apenas os primeiros 200 sem filtro para performance
+
+            if (termo) {
+                query = query.ilike('nome_completo', `%${termo}%`);
+            }
+
+            const { data, error } = await query;
+            if (error) return console.error(error);
+            
+            alunosDisponiveis = data || [];
             renderLists();
+        }
+
+        /**
+         * Busca TODOS os alunos da turma selecionada (Independente do limite global)
+         */
+        async function fetchAlunosAlocados(turmaId) {
+            if (!turmaId) {
+                alunosAlocados = [];
+                renderLists();
+                return;
+            }
+
+            const { data, error } = await supabaseClient
+                .from('alunos')
+                .select('ra, nome_completo, url_foto, id_turma, id_subturma_ingles')
+                .eq('id_turma', turmaId)
+                .order('nome_completo');
+
+            if (error) return console.error(error);
+            
+            alunosAlocados = data || [];
+            renderLists();
+        }
+
+        function handleAvailableSearch(val) {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                fetchAlunosDisponiveis(val);
+            }, 400);
         }
 
         function renderLists() {
             const listDisp = document.getElementById('listDisponiveis');
             const listAloc = document.getElementById('listAlocados');
-            const searchVal = document.getElementById('searchDisponivel').value.toLowerCase();
 
-            const disponiveis = todosAlunos.filter(a => !a.id_turma && a.nome_completo.toLowerCase().includes(searchVal));
-            
-            listDisp.innerHTML = disponiveis.length === 0 
+            // Renderiza Disponíveis (Query Server-side já fez o filtro)
+            listDisp.innerHTML = alunosDisponiveis.length === 0 
                 ? `<p class="text-center py-10 text-slate-300 text-xs italic">Nenhum aluno disponível</p>`
-                : disponiveis.map(aluno => renderAlunoItem(aluno, 'add')).join('');
+                : alunosDisponiveis.map(aluno => renderAlunoItem(aluno, 'add')).join('');
 
+            // Renderiza Alocados
             if (turmaAtualId) {
-                const alocados = todosAlunos.filter(a => a.id_turma === turmaAtualId);
-                document.getElementById('vagasCount').innerText = `${alocados.length} / 48`;
-                listAloc.innerHTML = alocados.length === 0
+                document.getElementById('vagasCount').innerText = `${alunosAlocados.length} / 48`;
+                listAloc.innerHTML = alunosAlocados.length === 0
                     ? `<div class="h-full flex items-center justify-center text-slate-300 text-xs italic">Turma vazia</div>`
-                    : alocados.map(aluno => renderAlunoItem(aluno, 'remove')).join('');
+                    : alunosAlocados.map(aluno => renderAlunoItem(aluno, 'remove')).join('');
             } else {
                 listAloc.innerHTML = `<div class="h-full flex flex-col items-center justify-center text-slate-300 gap-2"><i data-lucide="arrow-left-right" class="w-10 h-10 opacity-20"></i><p class="text-xs font-medium italic">Selecione uma turma para carregar os dados</p></div>`;
             }
@@ -374,7 +418,7 @@
                     <div class="flex items-center gap-3">
                         <div class="flex-shrink-0">${photo}</div>
                         <div class="flex flex-col">
-                            <span class="text-xs font-bold text-fmm-dark">${aluno.nome_completo}</span>
+                            <span class="text-xs font-bold text-fmm-dark uppercase">${aluno.nome_completo}</span>
                             <span class="text-[9px] text-slate-400 font-bold uppercase">RA: ${aluno.ra}</span>
                         </div>
                     </div>
@@ -385,15 +429,19 @@
         async function handleTurmaChange() {
             turmaAtualId = document.getElementById('selectTurma').value;
             const t = todasTurmas.find(x => x.id === turmaAtualId);
+            
             if (t) {
                 document.getElementById('statsTurma').classList.remove('hidden');
                 document.getElementById('turmaTitle').innerText = t.nome;
                 document.getElementById('nivelSerieDesc').innerText = `${t.nivel} / ${t.serie}`;
+                // Carrega especificamente os alunos dessa turma
+                await fetchAlunosAlocados(turmaAtualId);
             } else {
                 document.getElementById('statsTurma').classList.add('hidden');
                 document.getElementById('turmaTitle').innerText = "Nenhuma turma selecionada";
+                alunosAlocados = [];
+                renderLists();
             }
-            renderLists();
         }
 
         async function moverParaTurma(ra) {
@@ -401,19 +449,18 @@
             const { error } = await supabaseClient.from('alunos').update({ id_turma: turmaAtualId }).eq('ra', ra);
             if (!error) {
                 await supabaseClient.from('matriculas').upsert({ ra_aluno: ra, id_turma: turmaAtualId, ano_letivo: 2026, status: 'CURSANDO' }, { onConflict: 'ra_aluno, id_turma, ano_letivo' });
-                const idx = todosAlunos.findIndex(a => a.ra === ra);
-                if (idx !== -1) todosAlunos[idx].id_turma = turmaAtualId;
-                renderLists();
+                // Atualiza as listas locais sem recarregar tudo
+                await fetchAlunosAlocados(turmaAtualId);
+                await fetchAlunosDisponiveis(document.getElementById('searchDisponivel').value);
             }
         }
 
         async function removerDaTurma(ra) {
             if(!confirm("Remover este aluno da turma?")) return;
-            const { error } = await supabaseClient.from('alunos').update({ id_turma: null }).eq('ra', ra);
+            const { error } = await supabaseClient.from('alunos').update({ id_turma: null, id_subturma_ingles: null }).eq('ra', ra);
             if (!error) {
-                const idx = todosAlunos.findIndex(a => a.ra === ra);
-                if (idx !== -1) todosAlunos[idx].id_turma = null;
-                renderLists();
+                await fetchAlunosAlocados(turmaAtualId);
+                await fetchAlunosDisponiveis(document.getElementById('searchDisponivel').value);
             }
         }
 
@@ -462,8 +509,8 @@
             listUn.innerHTML = ''; listA.innerHTML = ''; listB.innerHTML = '';
             let cU=0, cA=0, cB=0;
 
-            const subAId = currentSubturmas[0].id;
-            const subBId = currentSubturmas[1].id;
+            const subAId = currentSubturmas[0]?.id;
+            const subBId = currentSubturmas[1]?.id;
 
             alunosNaTurmaPai.forEach(a => {
                 const card = document.createElement('div');
