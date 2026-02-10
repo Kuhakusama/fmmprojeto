@@ -1,9 +1,9 @@
 /**
  * Componente de Sidebar Reutilizável SME FMM 2026
- * Versão Ultra-Blindada: Injeção automática de CSS e correção de sobreposição.
+ * Versão: 2.9 - Links Dinâmicos por Cargo (Sanções Inspetoria)
  */
 const SidebarComponent = {
-    // Estilos internos para garantir que a sidebar NUNCA quebre, independente da página
+    // Estilos internos para garantir que a sidebar NUNCA quebre
     styles: `
         .sidebar-transition { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .sidebar-collapsed .sidebar-text, 
@@ -34,9 +34,11 @@ const SidebarComponent = {
     menuItems: {
         principal: [
             { label: 'Dashboard', icon: 'pie-chart', link: 'coordenador/principal/dashboard_coordenador.html', roles: ['coordenador', 'diretor', 'orientador'] },
+            { label: 'Dashboard', icon: 'pie-chart', link: 'secretaria/dashboard_secretaria.html', roles: ['secretaria'] },
+            { label: 'Dashboard', icon: 'pie-chart', link: 'inspetor/dashboard_inspetor.html', roles: ['inspetor'] },
             { label: 'Tarefas (Scrum)', icon: 'check-square', link: 'coordenador/principal/tarefas_coordenador.html', roles: ['coordenador', 'diretor'] },
             { label: 'Requerimentos', icon: 'inbox', link: 'coordenador/principal/requerimentos.html', roles: ['coordenador', 'diretor'], badge: true },
-            { label: 'Meu Perfil', icon: 'user-circle', link: 'coordenador/principal/perfil_coordenador.html', roles: ['coordenador', 'diretor', 'orientador'] }
+            { label: 'Meu Perfil', icon: 'user-circle', link: 'coordenador/principal/perfil_coordenador.html', roles: ['coordenador', 'diretor', 'orientador', 'secretaria', 'inspetor'] }
         ],
         administrativo: [
             { label: 'Usuários / Staff', icon: 'shield-check', link: 'coordenador/administrativo/usuarios_coordenador.html', roles: ['diretor', 'coordenador'] },
@@ -48,10 +50,14 @@ const SidebarComponent = {
             { label: 'Grade Horária', icon: 'calendar-range', link: 'coordenador/administrativo/grade_coordenador.html', roles: ['diretor', 'coordenador'] }
         ],
         pedagogico: [
+            // Sanções para Coordenação
             { label: 'Sanções', icon: 'shield-alert', link: 'coordenador/pedagogico/sancoes_coordenador.html', roles: ['diretor', 'coordenador', 'orientador'] },
+            // Sanções para Inspetoria (URL solicitada)
+            { label: 'Sanções', icon: 'shield-alert', link: 'inspetor/sancoes_inspetor.html', roles: ['inspetor'] },
+            
             { label: 'Atendimentos', icon: 'message-square', link: 'coordenador/pedagogico/atendimentos_coordenador.html', roles: ['diretor', 'coordenador', 'orientador'] },
-            { label: 'Saídas', icon: 'log-out', link: 'coordenador/pedagogico/saidas_coordenador.html', roles: ['diretor', 'coordenador'] },
-            { label: 'Atrasos', icon: 'clock', link: 'coordenador/pedagogico/atrasos_coordenador.html', roles: ['diretor', 'coordenador'] }
+            { label: 'Saídas', icon: 'log-out', link: 'coordenador/pedagogico/saidas_coordenador.html', roles: ['diretor', 'coordenador', 'secretaria'] },
+            { label: 'Atrasos', icon: 'clock', link: 'coordenador/pedagogico/atrasos_coordenador.html', roles: ['diretor', 'coordenador', 'secretaria'] }
         ],
         notas: [
             { label: 'Boletim Individual', icon: 'user', link: 'coordenador/notas/boletim_coordenador.html', roles: ['diretor', 'coordenador'] },
@@ -73,7 +79,7 @@ const SidebarComponent = {
         if (path.includes('/notas/') || path.includes('/pedagogico/') || path.includes('/administrativo/') || path.includes('/principal/')) {
             return '../../';
         }
-        if (path.includes('/professor/') || (path.includes('/coordenador/') && !path.includes('/', path.indexOf('/coordenador/') + 13))) {
+        if (path.includes('/professor/') || path.includes('/secretaria/') || path.includes('/inspetor/') || path.includes('/inspetoria/') || (path.includes('/coordenador/') && !path.includes('/', path.indexOf('/coordenador/') + 13))) {
             return '../';
         }
         return './';
@@ -91,8 +97,34 @@ const SidebarComponent = {
         document.head.appendChild(styleTag);
     },
 
+    updateUserUI: function(profile) {
+        if (!profile) return;
+        const nameEl = document.getElementById('userName');
+        const roleEl = document.getElementById('userRoleLabel');
+        const initialsEl = document.getElementById('userInitials');
+
+        if (nameEl) nameEl.innerText = profile.nome_completo || 'Usuário';
+        if (roleEl) {
+            const roleLabels = {
+                'diretor': 'Diretor Acadêmico',
+                'coordenador': 'Coordenador Acadêmico',
+                'orientador': 'Orientador Pedagógico',
+                'professor': 'Docente',
+                'secretaria': 'Secretaria Acadêmica',
+                'inspetor': 'Inspetor de Alunos'
+            };
+            roleEl.innerText = roleLabels[profile.cargo?.toLowerCase()] || profile.cargo || 'Staff';
+        }
+
+        if (initialsEl && profile.nome_completo) {
+            const names = profile.nome_completo.split(' ').filter(n => n.length > 2);
+            let initials = names.length >= 2 ? (names[0][0] + names[names.length - 1][0]).toUpperCase() : (names[0] ? names[0][0].toUpperCase() : "?");
+            initialsEl.innerText = initials;
+        }
+    },
+
     render: async function(containerId) {
-        this.injectStyles(); // Garante o CSS correto
+        this.injectStyles(); 
         const prefix = this.getRelativePrefix();
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -102,8 +134,11 @@ const SidebarComponent = {
             if (window.supabaseClient) {
                 const { data: { user } } = await window.supabaseClient.auth.getUser();
                 if (user) {
-                    const { data: profile } = await window.supabaseClient.from('perfis').select('cargo').eq('id', user.id).maybeSingle();
-                    if (profile) userRole = profile.cargo?.toLowerCase() || 'professor';
+                    const { data: profile } = await window.supabaseClient.from('perfis').select('cargo, nome_completo').eq('id', user.id).maybeSingle();
+                    if (profile) {
+                        userRole = profile.cargo?.toLowerCase() || 'professor';
+                        this.updateUserUI(profile);
+                    }
                 }
             }
         } catch (e) { console.warn("Erro ao buscar cargo.", e); }
@@ -114,6 +149,25 @@ const SidebarComponent = {
         if (userRole === 'professor') {
             const docenteItems = this.filterItemsByRole(this.menuItems.docente, userRole);
             navHTML += this.buildSimpleCategory('Portal do Docente', docenteItems, activePage, prefix);
+        } else if (userRole === 'secretaria') {
+            const dash = this.menuItems.principal.find(i => i.label === 'Dashboard' && i.roles.includes('secretaria'));
+            const saidas = this.menuItems.pedagogico.find(i => i.label === 'Saídas' && i.roles.includes('secretaria'));
+            const atrasos = this.menuItems.pedagogico.find(i => i.label === 'Atrasos' && i.roles.includes('secretaria'));
+
+            navHTML += `<div class="py-4">`;
+            if (dash) navHTML += this.buildLink(dash, activePage, prefix);
+            if (saidas) navHTML += this.buildLink(saidas, activePage, prefix);
+            if (atrasos) navHTML += this.buildLink(atrasos, activePage, prefix);
+            navHTML += `</div>`;
+        } else if (userRole === 'inspetor') {
+            // Lógica Flat para Inspetor (Dashboard e Sanções com URL específica)
+            const dash = this.menuItems.principal.find(i => i.label === 'Dashboard' && i.roles.includes('inspetor'));
+            const sancoes = this.menuItems.pedagogico.find(i => i.label === 'Sanções' && i.roles.includes('inspetor'));
+
+            navHTML += `<div class="py-4">`;
+            if (dash) navHTML += this.buildLink(dash, activePage, prefix);
+            if (sancoes) navHTML += this.buildLink(sancoes, activePage, prefix);
+            navHTML += `</div>`;
         } else {
             const principalItems = this.filterItemsByRole(this.menuItems.principal, userRole);
             const admItems = this.filterItemsByRole(this.menuItems.administrativo, userRole);
@@ -129,7 +183,8 @@ const SidebarComponent = {
         container.innerHTML = `
             <div class="flex flex-col h-full overflow-hidden bg-[#003c5b]">
                 <div class="p-6 h-24 border-b border-white/5 flex items-center justify-center relative flex-shrink-0">
-                    <img src="${prefix}assets/logo-fmm-white.png" alt="FMM" class="logo-full h-10 object-contain" onerror="this.style.display='none'; this.nextElementSibling.style.display='block'">
+                    <img src="${prefix}assets/logo-fmm-white.png" alt="FMM" class="logo-full h-10 object-contain" 
+                         onerror="this.src='https://ui-avatars.com/api/?name=FMM&background=003c5b&color=fff&size=128'">
                     <div class="logo-short font-black text-2xl text-[#c8d400] hidden">M</div>
                     <button onclick="SidebarComponent.toggleSidebar()" class="absolute -right-3 top-20 bg-[#c8d400] text-[#003c5b] rounded-full p-1 shadow-lg hover:scale-110 transition-transform z-[60]">
                         <i id="sidebar-toggle-icon" data-lucide="chevron-left" class="w-4 h-4"></i>
@@ -201,10 +256,8 @@ const SidebarComponent = {
         const target = document.getElementById(id);
         const icon = document.getElementById(`icon-${id}`);
         const body = document.body;
-        
         if (body.classList.contains('sidebar-collapsed')) this.toggleSidebar();
         if (!target) return;
-        
         if (target.classList.contains('open')) {
             target.classList.remove('open');
             target.style.maxHeight = '0';
@@ -222,13 +275,8 @@ const SidebarComponent = {
         const body = document.body;
         const icon = document.getElementById('sidebar-toggle-icon');
         const sidebar = document.getElementById('sidebar-container');
-        
         body.classList.toggle('sidebar-collapsed');
-        
-        if (sidebar) {
-            sidebar.style.width = body.classList.contains('sidebar-collapsed') ? '80px' : '288px';
-        }
-
+        if (sidebar) sidebar.style.width = body.classList.contains('sidebar-collapsed') ? '80px' : '288px';
         if (icon && window.lucide) {
             const isCollapsed = body.classList.contains('sidebar-collapsed');
             icon.setAttribute('data-lucide', isCollapsed ? 'chevron-right' : 'chevron-left');
@@ -256,22 +304,18 @@ const SidebarComponent = {
         const state = JSON.parse(localStorage.getItem('sidebarState') || '{}');
         const body = document.body;
         const activePage = window.location.pathname.split('/').pop();
-
         if (body.classList.contains('sidebar-collapsed')) {
             const sidebar = document.getElementById('sidebar-container');
             if (sidebar) sidebar.style.width = '80px';
             const icon = document.getElementById('sidebar-toggle-icon');
             if (icon) icon.setAttribute('data-lucide', 'chevron-right');
         }
-
         const categories = ['cat-principal', 'cat-adm', 'cat-ped', 'cat-notas'];
         categories.forEach(id => {
             const content = document.getElementById(id);
             const icon = document.getElementById(`icon-${id}`);
             if (!content) return;
-
             const hasActivePage = Array.from(content.querySelectorAll('a')).some(a => a.getAttribute('href').includes(activePage));
-            
             if (hasActivePage || state[id]) {
                 content.classList.add('open');
                 content.style.maxHeight = "none";
@@ -282,7 +326,6 @@ const SidebarComponent = {
                 if (icon) icon.classList.remove('rotate-180');
             }
         });
-        
         if (window.lucide) lucide.createIcons();
     }
 };

@@ -113,8 +113,6 @@
     </div>
 
     <script>
-        // TASK 3.2.1: Repetitividade removida. O objeto 'supabaseClient' agora vem do arquivo global.
-
         function showToast(text, type = 'info') {
             const toast = document.getElementById('toast');
             document.getElementById('toastText').innerText = text;
@@ -136,26 +134,32 @@
             lucide.createIcons();
 
             try {
-                // 'supabaseClient' está disponível globalmente através do assets/js/supabase_client.js
+                // Realiza o login via Supabase Auth
                 const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({ email, password });
                 if (authError) throw authError;
 
+                // Busca o perfil do usuário para determinar o redirecionamento
                 const { data: perfil, error: perfError } = await supabaseClient
                     .from('perfis')
                     .select('cargo')
                     .eq('id', authData.user.id)
                     .maybeSingle();
 
-                if (perfError || !perfil) throw new Error("Perfil não encontrado.");
+                if (perfError || !perfil) throw new Error("Perfil não encontrado no sistema.");
 
+                // Mapeamento de rotas por cargo
                 const destinos = {
                     'diretor': 'coordenador/principal/dashboard_coordenador.html',
                     'coordenador': 'coordenador/principal/dashboard_coordenador.html',
                     'professor': 'professor/dashboard_professor.html',
-                    'orientador': 'coordenador/principal/dashboard_coordenador.html'
+                    'orientador': 'coordenador/principal/dashboard_coordenador.html',
+                    'secretaria': 'secretaria/dashboard_secretaria.html',
+                    'inspetor': 'inspetor/dashboard_inspetor.html'
                 };
 
                 const cargo = perfil.cargo ? perfil.cargo.toLowerCase() : '';
+                
+                // Redireciona ou usa o dashboard de coordenador como fallback
                 window.location.href = destinos[cargo] || 'coordenador/principal/dashboard_coordenador.html';
                 
             } catch (err) {
