@@ -122,6 +122,10 @@
                 <button onclick="closeDrawer()" class="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div class="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
+                
+                <!-- ÁREA DE DECISÃO DO COORDENADOR (3/3) -->
+                <div id="coordinatorDecisionArea" class="hidden space-y-3"></div>
+
                 <!-- ALERTA DE LIMITE (3/3) -->
                 <div id="parentAlertContainer" class="hidden flex flex-col gap-3"></div>
                 
@@ -254,7 +258,8 @@
             "46. Ausentar-se da escola sem autorização",
             "47. Adulterar ou invalidar informações do crachá",
             "48. Escovar os dentes circulando pelos corredores",
-            "49. Utilizar meios ilícitos ou fraudulentos em avaliações"
+            "49. Utilizar meios ilícitos ou fraudulentos em avaliações",
+            "51. Alto nível de Notificações acumuladas"
         ];
 
         let currentUser = null;
@@ -303,6 +308,23 @@
 
         function handleSearch(val) { clearTimeout(searchTimeout); searchTimeout = setTimeout(() => { renderGrid(val); }, 300); }
 
+        /**
+         * LÓGICA DE CÁLCULO DE REINCIDÊNCIA (3 em 3)
+         * Retorna a contagem de sanções de um nível que ocorreram APÓS a sanção de nível superior.
+         */
+        function getActiveCountByLevel(history, level) {
+            if (level === 4) return history.filter(h => h.nivel === 4).length;
+
+            // Busca a sanção de nível superior mais recente
+            const latestSuperior = history.filter(h => h.nivel > level)
+                                          .sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em))[0];
+            
+            if (!latestSuperior) return history.filter(h => h.nivel === level).length;
+
+            // Conta sanções do nível atual feitas após a superior
+            return history.filter(h => h.nivel === level && new Date(h.criado_em) > new Date(latestSuperior.criado_em)).length;
+        }
+
         async function renderGrid(filterVal = '') {
             const thisRequestTime = Date.now();
             latestRequestTimestamp = thisRequestTime;
@@ -317,8 +339,6 @@
             grid.innerHTML = '';
             if(empty) empty.classList.add('hidden');
 
-            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
-            // Usamos inner join com turmas para filtrar pelo nível autorizado
             let query = window.supabaseClient.from('alunos').select('ra, nome_completo, url_foto, turmas!inner(nivel)').limit(60);
             
             if (userLevels.length > 0) {
@@ -337,14 +357,12 @@
                  return;
             }
 
-            // Buscar sanções para os dots de uma vez só
-            const { data: allSancoes } = await window.supabaseClient.from('sancoes_disciplinares').select('ra_aluno, nivel');
+            // Buscar sanções para os dots
+            const { data: allSancoes } = await window.supabaseClient.from('sancoes_disciplinares').select('ra_aluno, nivel, criado_em');
 
             for(const s of students) {
                 const sancoesAlu = allSancoes?.filter(sc => sc.ra_aluno === s.ra) || [];
-                const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-                sancoesAlu.forEach(sc => counts[sc.nivel]++);
-
+                
                 const avatar = formatDriveUrl(s.url_foto) || `https://ui-avatars.com/api/?name=${encodeURIComponent(s.nome_completo)}&background=random`;
 
                 const card = document.createElement('div');
@@ -353,7 +371,8 @@
 
                 let dotsHTML = '';
                 [1, 2, 3, 4].forEach(lvl => {
-                    const filled = Math.min(counts[lvl], 3);
+                    const activeCount = getActiveCountByLevel(sancoesAlu, lvl);
+                    const filled = Math.min(activeCount, 3);
                     let dots = '';
                     for(let i=0; i<3; i++) dots += `<div class="level-dot ${i < filled ? 'active-'+lvl : ''}"></div>`;
                     const label = lvl === 1 ? 'Notif' : lvl === 2 ? 'Adv V' : lvl === 3 ? 'Adv E' : 'Susp';
@@ -385,7 +404,7 @@
             document.getElementById('drawerRA').innerText = `RA: ${student.ra}`;
             document.getElementById('drawerAvatar').src = formatDriveUrl(student.url_foto) || `https://ui-avatars.com/api/?name=${encodeURIComponent(student.nome_completo)}`;
             await renderHistory();
-            await checkAlerts(); // RESTAURADO: Verificação de alertas 3/3
+            await checkAlerts(); 
             document.getElementById('studentDrawer').classList.add('open');
         }
 
@@ -393,21 +412,81 @@
 
         async function renderHistory() {
             const container = document.getElementById('historyList');
+            const decisionArea = document.getElementById('coordinatorDecisionArea');
+            
             container.innerHTML = '<div class="text-center py-4"><i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto text-slate-300"></i></div>';
+            decisionArea.innerHTML = '';
+            decisionArea.classList.add('hidden');
             lucide.createIcons();
 
             const { data: history } = await window.supabaseClient.from('sancoes_disciplinares').select('*, perfis(nome_completo)').eq('ra_aluno', currentStudent.ra).order('data_sancao', { ascending: false });
             container.innerHTML = '';
+            
             if (!history || history.length === 0) {
                 container.innerHTML = `<p class="text-center text-slate-400 text-xs italic py-4">Nenhuma sanção registrada.</p>`; return;
             }
 
-            currentStudent.history = history.map(h => ({ id: h.id, level: h.nivel, code: h.codigo, date: h.data_sancao, reason: h.infracao, author: h.perfis?.nome_completo || 'Sistema', observacao: h.observacao }));
+            currentStudent.history = history.map(h => ({ id: h.id, level: h.nivel, code: h.codigo, date: h.data_sancao, reason: h.infracao, author: h.perfis?.nome_completo || 'Sistema', observacao: h.observacao, criado_em: h.criado_em }));
+
+            // --- LÓGICA DE ALERTA E DECISÃO DO COORDENADOR (PROGRESSÃO DISCIPLINAR 3 EM 3) ---
+            const levelLabels = { 1: 'Notificações', 2: 'Adv. Verbais', 3: 'Adv. Escritas', 4: 'Suspensões' };
+            const nextLevelLabels = { 1: 'Advertência Verbal', 2: 'Advertência Escrita', 3: 'Suspensão' };
+            
+            // Verifica do maior nível pro menor se atingiu o limite de 3 ativos
+            let levelToEscalate = 0;
+            if (getActiveCountByLevel(history, 3) >= 3) levelToEscalate = 3;
+            else if (getActiveCountByLevel(history, 2) >= 3) levelToEscalate = 2;
+            else if (getActiveCountByLevel(history, 1) >= 3) levelToEscalate = 1;
+
+            // Painel só aparece para coordenadores/diretores
+            if (levelToEscalate > 0 && currentUser.cargo !== 'inspetor') {
+                decisionArea.classList.remove('hidden');
+                
+                // Filtra apenas as sanções que contam para o limite atual (após a última de nível superior)
+                const latestSuperior = history.filter(h => h.nivel > levelToEscalate)
+                                              .sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em))[0];
+                
+                const activeSanctions = history.filter(h => 
+                    h.nivel === levelToEscalate && 
+                    (!latestSuperior || new Date(h.criado_em) > new Date(latestSuperior.criado_em))
+                );
+
+                const listCurrent = activeSanctions.map(h => `• ${new Date(h.data_sancao + 'T12:00:00').toLocaleDateString()}: ${h.infracao}`).join('<br>');
+                const nextLevel = levelToEscalate + 1;
+                
+                decisionArea.innerHTML = `
+                    <div class="p-5 bg-red-50 border-2 border-red-200 rounded-[24px] space-y-4 animate-fade-in-up">
+                        <div class="flex items-start gap-3">
+                            <div class="p-2 bg-red-500 rounded-full text-white shadow-lg"><i data-lucide="alert-circle" class="w-5 h-5"></i></div>
+                            <div class="flex-1">
+                                <h4 class="text-sm font-black text-red-700 uppercase leading-tight">Intervenção Acadêmica</h4>
+                                <p class="text-[10px] text-red-600 font-bold uppercase mt-1">O aluno acumulou 3 ${levelLabels[levelToEscalate]} ativas.</p>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-white/50 rounded-xl text-[10px] text-red-800 font-medium leading-relaxed">
+                            <p class="font-black mb-1 uppercase opacity-60">Registros Ativos para Progressão:</p>
+                            ${listCurrent}
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <p class="text-[9px] font-black text-slate-400 uppercase text-center">Decisão do Coordenador:</p>
+                            <div class="flex gap-2">
+                                <button onclick="clearSanctionsByLevel(${levelToEscalate})" class="flex-1 py-3 bg-white border border-slate-200 text-slate-500 text-[10px] font-black rounded-xl hover:bg-slate-50 transition-all uppercase flex items-center justify-center gap-1">
+                                    <i data-lucide="trash-2" class="w-3 h-3"></i> Apagar ${levelLabels[levelToEscalate]}
+                                </button>
+                                ${nextLevel <= 4 ? `
+                                <button onclick="applyEscalated(${nextLevel})" class="flex-1 py-3 bg-fmm-dark text-white text-[10px] font-black rounded-xl shadow-lg hover:bg-slate-800 transition-all uppercase flex items-center justify-center gap-1">
+                                    <i data-lucide="trending-up" class="w-3 h-3 text-fmm-lime"></i> Aplicar ${nextLevelLabels[levelToEscalate]}
+                                </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
 
             const groupedHistory = { 1: [], 2: [], 3: [], 4: [] };
             history.forEach(h => { groupedHistory[h.nivel].push(h); });
             const colors = { 1: 'bg-blue-100 text-blue-700', 2: 'bg-yellow-100 text-yellow-700', 3: 'bg-orange-100 text-orange-700', 4: 'bg-red-100 text-red-700' };
-            const levelLabels = { 1: 'Notificações', 2: 'Advertências Verbais', 3: 'Advertências Escritas', 4: 'Suspensões' };
 
             [4, 3, 2, 1].forEach(level => {
                 if (groupedHistory[level].length > 0) {
@@ -415,7 +494,7 @@
                     levelSection.className = "mb-6";
                     levelSection.innerHTML = `<h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 border-b border-slate-100 pb-1">${levelLabels[level]}</h4>`;
                     groupedHistory[level].forEach(h => {
-                        const displayDate = ManausTime.format(h.data_sancao); // TASK 3.2.2
+                        const displayDate = ManausTime.format(h.data_sancao); 
                         const authorName = h.perfis?.nome_completo || 'Sistema';
                         const obsHTML = h.observacao ? `<p class="text-[10px] text-slate-500 mt-2 bg-white/50 p-2 rounded border border-slate-100 italic">Obs: "${h.observacao}"</p>` : '';
                         levelSection.innerHTML += `
@@ -443,14 +522,17 @@
             lucide.createIcons();
         }
 
-        // RESTAURADO: Lógica de Alertas de Limite e Comunicados aos Pais
         async function checkAlerts() {
             const container = document.getElementById('parentAlertContainer');
             container.innerHTML = '';
             const { data: alerts } = await window.supabaseClient.from('sancoes_alertas').select('*').eq('ra_aluno', currentStudent.ra);
             if(alerts) alerts.forEach(a => { currentStudent.emailSent[a.nivel] = (a.status_email === 'enviado'); });
+            
             const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-            if(currentStudent.history) currentStudent.history.forEach(h => counts[h.level]++);
+            if(currentStudent.history) {
+                [1,2,3,4].forEach(l => counts[l] = getActiveCountByLevel(currentStudent.history, l));
+            }
+
             let hasAlert = false;
             for(let level=1; level<=4; level++) {
                 if (counts[level] >= 3) {
@@ -461,7 +543,7 @@
                     <div class="p-4 bg-red-50 border border-red-100 rounded-2xl flex flex-col gap-3 animate-fade-in-up">
                         <div class="flex items-start gap-3">
                             <div class="p-2 bg-red-100 rounded-full text-red-600"><i data-lucide="siren" class="w-5 h-5"></i></div>
-                            <div><h4 class="text-sm font-bold text-red-700">Limite de ${labels[level]} Atingido</h4><p class="text-xs text-red-600 mt-1 leading-relaxed">O aluno acumulou 3 ocorrências deste nível.</p></div>
+                            <div><h4 class="text-sm font-bold text-red-700">Comunicado aos Responsáveis</h4><p class="text-xs text-red-600 mt-1 leading-relaxed">O aluno acumulou 3 ocorrências ativas deste nível.</p></div>
                         </div>
                         <div class="flex items-center justify-between bg-white p-2 rounded-xl border border-red-100">
                             <div class="flex items-center gap-2 pl-2 cursor-pointer" onclick="toggleEmailStatus(${level}, '${isSent ? 'pendente' : 'enviado'}')">
@@ -475,6 +557,34 @@
                 }
             }
             if(hasAlert) { container.classList.remove('hidden'); lucide.createIcons(); } else container.classList.add('hidden');
+        }
+
+        async function clearSanctionsByLevel(level) {
+            const labels = { 1: 'Notificações', 2: 'Advertências Verbais', 3: 'Advertências Escritas', 4: 'Suspensões' };
+            if(!confirm(`Deseja remover as sanções ativas de nível "${labels[level]}" para zerar o contador? (O histórico antigo não será afetado).`)) return;
+            
+            // Aqui apagamos apenas as que contam para o limite atual
+            const latestSuperior = currentStudent.history.filter(h => h.level > level)
+                                          .sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em))[0];
+            
+            let query = window.supabaseClient.from('sancoes_disciplinares').delete().eq('ra_aluno', currentStudent.ra).eq('nivel', level);
+            if(latestSuperior) query = query.gt('criado_em', latestSuperior.criado_em);
+
+            const { error } = await query;
+                
+            if(error) alert("Erro ao limpar: " + error.message);
+            else {
+                await renderHistory();
+                await checkAlerts();
+                renderGrid(document.getElementById('studentSearch').value);
+            }
+        }
+
+        function applyEscalated(level) {
+            openNewSanctionModal();
+            document.getElementById('sanctionLevel').value = level;
+            document.getElementById('sanctionReason').value = "51. Alto nível de Notificações acumuladas";
+            document.getElementById('sanctionObs').value = `Intervenção da Coordenação após acúmulo de 3 registros no nível anterior.`;
         }
 
         async function toggleEmailStatus(level, newStatus) {
@@ -492,27 +602,38 @@
             const title = document.getElementById('modalSanctionTitle');
             const btnDelete = document.getElementById('btnDeleteSanction');
             const authorSelect = document.getElementById('sanctionAuthor');
+            const levelSelect = document.getElementById('sanctionLevel');
 
-            document.getElementById('sanctionLevel').value = '';
+            levelSelect.value = '';
             document.getElementById('sanctionDate').value = ManausTime.toISODate();
             document.getElementById('sanctionReason').value = '';
             document.getElementById('sanctionObs').value = '';
             authorSelect.innerHTML = `<option value="${currentUser.id}">${currentUser.nome_completo} (Eu)</option>`;
 
-            const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-            if(currentStudent.history) currentStudent.history.forEach(h => counts[h.level]++);
-
+            // --- LÓGICA DE TRAVA POR CARGO (INSPETOR) ---
+            const isInspetor = currentUser.cargo === 'inspetor';
             for(let i=1; i<=4; i++) {
                 const opt = document.getElementById(`opt-lvl-${i}`);
-                opt.innerText = opt.innerText.replace(" (Bloqueado 3/3)", "");
-                const isEditingThisLevel = dataToLoad.level === i;
-                if (counts[i] >= 3 && !isEditingThisLevel) { opt.disabled = true; opt.innerText += " (Bloqueado 3/3)"; } else opt.disabled = false;
+                if (isInspetor && i > 1) {
+                    opt.disabled = true;
+                    opt.innerText = opt.innerText.replace(" (Apenas Coordenador)", "") + " (Apenas Coordenador)";
+                } else {
+                    opt.disabled = false;
+                    opt.innerText = opt.innerText.replace(" (Apenas Coordenador)", "");
+                }
+            }
+
+            if(isInspetor && !existingSanction) {
+                levelSelect.value = "1";
+                levelSelect.disabled = true;
+            } else {
+                levelSelect.disabled = false;
             }
 
             if(existingSanction) {
                 title.innerHTML = '<i data-lucide="edit" class="w-5 h-5 text-fmm-blue"></i> Editar Sanção';
                 btnDelete.classList.remove('hidden');
-                document.getElementById('sanctionLevel').value = dataToLoad.level;
+                levelSelect.value = dataToLoad.level;
                 document.getElementById('sanctionDate').value = dataToLoad.date;
                 document.getElementById('sanctionReason').value = dataToLoad.reason;
                 document.getElementById('sanctionObs').value = dataToLoad.observacao || '';
@@ -528,7 +649,8 @@
         function openNewSanctionModal() { openSanctionModal(); }
 
         async function saveSanction() {
-            const level = parseInt(document.getElementById('sanctionLevel').value);
+            const levelSelect = document.getElementById('sanctionLevel');
+            const level = parseInt(levelSelect.value);
             const reason = document.getElementById('sanctionReason').value;
             const date = document.getElementById('sanctionDate').value;
             const obs = document.getElementById('sanctionObs').value;
@@ -558,8 +680,18 @@
         async function openEmailModal(level) {
             const labels = { 1: 'Notificações', 2: 'Advertências Verbais', 3: 'Advertências Escritas', 4: 'Suspensões' };
             const nextLevel = level < 4 ? labels[level + 1] : "medidas extremas";
-            const listText = currentStudent.history.filter(h => h.level === level).map(s => `- ${ManausTime.format(s.date)}: ${s.reason}`).join('\n');
-            const body = `Prezados Responsáveis,\n\nInformamos que o aluno(a) ${currentStudent.nome_completo} (RA: ${currentStudent.ra}) atingiu o limite de 3 ${labels[level]} previstas no manual do aluno.\n\nHistórico de ocorrências deste nível:\n${listText}\n\nAlertamos que a reincidência levará à aplicação de ${nextLevel}.\n\nAtenciosamente,\nCoordenação Pedagógica FMM`;
+            
+            // Filtro dinâmico para o texto do e-mail também
+            const latestSuperior = currentStudent.history.filter(h => h.level > level)
+                                          .sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em))[0];
+            
+            const activeSanctions = currentStudent.history.filter(h => 
+                h.level === level && 
+                (!latestSuperior || new Date(h.criado_em) > new Date(latestSuperior.criado_em))
+            );
+
+            const listText = activeSanctions.map(s => `- ${ManausTime.format(s.date)}: ${s.reason}`).join('\n');
+            const body = `Prezados Responsáveis,\n\nInformamos que o aluno(a) ${currentStudent.nome_completo} (RA: ${currentStudent.ra}) atingiu o limite de 3 ${labels[level]} previstas no manual do aluno.\n\nHistórico de reincidência atual:\n${listText}\n\nAlertamos que a reincidência levará à aplicação de ${nextLevel}.\n\nAtenciosamente,\nCoordenação Pedagógica FMM`;
             document.getElementById('emailBody').value = body;
             document.getElementById('emailModal').classList.remove('hidden');
         }

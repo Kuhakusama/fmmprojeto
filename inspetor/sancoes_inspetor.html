@@ -122,6 +122,10 @@
                 <button onclick="closeDrawer()" class="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div class="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
+                
+                <!-- ÁREA DE DECISÃO DO COORDENADOR (3/3) - Mantida Hidden para Inspetor -->
+                <div id="coordinatorDecisionArea" class="hidden space-y-3"></div>
+
                 <!-- ALERTA DE LIMITE (3/3) -->
                 <div id="parentAlertContainer" class="hidden flex flex-col gap-3"></div>
                 
@@ -146,13 +150,8 @@
                     <div class="space-y-1.5">
                         <label class="text-[10px] font-bold text-slate-400 uppercase ml-1">Nível da Sanção</label>
                         <select id="sanctionLevel" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-fmm-blue font-bold text-slate-700 transition-all">
-                            <option value="">Selecione o nível...</option>
                             <option value="1" id="opt-lvl-1" class="text-blue-600 font-bold">Nível 1: Notificação</option>
-                            <option value="2" id="opt-lvl-2" class="text-yellow-600 font-bold">Nível 2: Advertência Verbal</option>
-                            <option value="3" id="opt-lvl-3" class="text-orange-600 font-bold">Nível 3: Advertência Escrita</option>
-                            <option value="4" id="opt-lvl-4" class="text-red-600 font-bold">Nível 4: Suspensão</option>
-                        </select>
-                        <p class="text-[10px] text-red-400 hidden mt-1 flex items-center gap-1" id="lockMessage"><i data-lucide="lock" class="w-3 h-3"></i> Limite de nível atingido (3/3). Opção bloqueada.</p>
+                        <p class="text-[10px] text-red-400 hidden mt-1 flex items-center gap-1" id="lockMessage"><i data-lucide="lock" class="w-3 h-3"></i> somente a coordenação pode registrar sanções de nivel superior</p>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div class="space-y-1.5 hidden"><input type="text" id="sanctionCode"></div>
@@ -262,7 +261,7 @@
         let editingSanctionId = null;
         let searchTimeout = null;
         let latestRequestTimestamp = 0;
-        let userLevels = []; // Níveis permitidos ao coordenador
+        let userLevels = [];
 
         function formatDriveUrl(url) {
             if (!url) return null;
@@ -274,27 +273,19 @@
         }
 
         async function init() {
-            // TASK 3.2.1: Sidebar Componentizada
             if(window.SidebarComponent) await SidebarComponent.render('sidebar-container');
             
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if(user) {
                  const { data: profile } = await window.supabaseClient.from('perfis').select('*').eq('id', user.id).single();
                  currentUser = profile;
-
-                 // --- CAPTURA DE CONTEXTO DO USUÁRIO ---
-                 if (profile.cargo === 'diretor') {
-                    userLevels = ['EF1', 'EF2', 'EMT'];
-                 } else {
-                    userLevels = profile.niveis_acesso || [];
-                 }
+                 userLevels = profile.niveis_acesso || [];
             }
 
             const reasonSelect = document.getElementById('sanctionReason');
             reasonSelect.innerHTML = '<option value="">Selecione a infração...</option>' + 
                 INFRACTIONS.map(inf => `<option value="${inf}">${inf}</option>`).join('');
             
-            // TASK 3.2.2: Inicializa data via ManausTime helper
             document.getElementById('sanctionDate').value = ManausTime.toISODate();
 
             renderGrid();
@@ -302,6 +293,17 @@
         }
 
         function handleSearch(val) { clearTimeout(searchTimeout); searchTimeout = setTimeout(() => { renderGrid(val); }, 300); }
+
+        /**
+         * LÓGICA DE CÁLCULO DE REINCIDÊNCIA (3 em 3)
+         */
+        function getActiveCountByLevel(history, level) {
+            if (level === 4) return history.filter(h => h.nivel === 4).length;
+            const latestSuperior = history.filter(h => h.nivel > level)
+                                          .sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em))[0];
+            if (!latestSuperior) return history.filter(h => h.nivel === level).length;
+            return history.filter(h => h.nivel === level && new Date(h.criado_em) > new Date(latestSuperior.criado_em)).length;
+        }
 
         async function renderGrid(filterVal = '') {
             const thisRequestTime = Date.now();
@@ -317,34 +319,23 @@
             grid.innerHTML = '';
             if(empty) empty.classList.add('hidden');
 
-            // --- LÓGICA DE FILTRAGEM POR NÍVEL AUTORIZADO ---
-            // Usamos inner join com turmas para filtrar pelo nível autorizado
             let query = window.supabaseClient.from('alunos').select('ra, nome_completo, url_foto, turmas!inner(nivel)').limit(60);
-            
-            if (userLevels.length > 0) {
-                query = query.in('turmas.nivel', userLevels);
-            }
-
+            if (userLevels.length > 0) query = query.in('turmas.nivel', userLevels);
             if(filterVal && filterVal.length >= 2) query = query.or(`nome_completo.ilike.%${filterVal}%,ra.ilike.%${filterVal}%`);
 
             const { data: students, error } = await query.order('nome_completo');
             if (thisRequestTime < latestRequestTimestamp) return;
 
             loading.classList.add('hidden');
-
             if(error || !students || students.length === 0) {
                  if(empty) empty.classList.remove('hidden');
                  return;
             }
 
-            // Buscar sanções para os dots de uma vez só
-            const { data: allSancoes } = await window.supabaseClient.from('sancoes_disciplinares').select('ra_aluno, nivel');
+            const { data: allSancoes } = await window.supabaseClient.from('sancoes_disciplinares').select('ra_aluno, nivel, criado_em');
 
             for(const s of students) {
                 const sancoesAlu = allSancoes?.filter(sc => sc.ra_aluno === s.ra) || [];
-                const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-                sancoesAlu.forEach(sc => counts[sc.nivel]++);
-
                 const avatar = formatDriveUrl(s.url_foto) || `https://ui-avatars.com/api/?name=${encodeURIComponent(s.nome_completo)}&background=random`;
 
                 const card = document.createElement('div');
@@ -353,7 +344,8 @@
 
                 let dotsHTML = '';
                 [1, 2, 3, 4].forEach(lvl => {
-                    const filled = Math.min(counts[lvl], 3);
+                    const activeCount = getActiveCountByLevel(sancoesAlu, lvl);
+                    const filled = Math.min(activeCount, 3);
                     let dots = '';
                     for(let i=0; i<3; i++) dots += `<div class="level-dot ${i < filled ? 'active-'+lvl : ''}"></div>`;
                     const label = lvl === 1 ? 'Notif' : lvl === 2 ? 'Adv V' : lvl === 3 ? 'Adv E' : 'Susp';
@@ -385,7 +377,7 @@
             document.getElementById('drawerRA').innerText = `RA: ${student.ra}`;
             document.getElementById('drawerAvatar').src = formatDriveUrl(student.url_foto) || `https://ui-avatars.com/api/?name=${encodeURIComponent(student.nome_completo)}`;
             await renderHistory();
-            await checkAlerts(); // RESTAURADO: Verificação de alertas 3/3
+            await checkAlerts(); 
             document.getElementById('studentDrawer').classList.add('open');
         }
 
@@ -398,11 +390,12 @@
 
             const { data: history } = await window.supabaseClient.from('sancoes_disciplinares').select('*, perfis(nome_completo)').eq('ra_aluno', currentStudent.ra).order('data_sancao', { ascending: false });
             container.innerHTML = '';
+            
             if (!history || history.length === 0) {
                 container.innerHTML = `<p class="text-center text-slate-400 text-xs italic py-4">Nenhuma sanção registrada.</p>`; return;
             }
 
-            currentStudent.history = history.map(h => ({ id: h.id, level: h.nivel, code: h.codigo, date: h.data_sancao, reason: h.infracao, author: h.perfis?.nome_completo || 'Sistema', observacao: h.observacao }));
+            currentStudent.history = history.map(h => ({ id: h.id, level: h.nivel, code: h.codigo, date: h.data_sancao, reason: h.infracao, author: h.perfis?.nome_completo || 'Sistema', observacao: h.observacao, criado_em: h.criado_em }));
 
             const groupedHistory = { 1: [], 2: [], 3: [], 4: [] };
             history.forEach(h => { groupedHistory[h.nivel].push(h); });
@@ -415,7 +408,7 @@
                     levelSection.className = "mb-6";
                     levelSection.innerHTML = `<h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 border-b border-slate-100 pb-1">${levelLabels[level]}</h4>`;
                     groupedHistory[level].forEach(h => {
-                        const displayDate = ManausTime.format(h.data_sancao); // TASK 3.2.2
+                        const displayDate = ManausTime.format(h.data_sancao); 
                         const authorName = h.perfis?.nome_completo || 'Sistema';
                         const obsHTML = h.observacao ? `<p class="text-[10px] text-slate-500 mt-2 bg-white/50 p-2 rounded border border-slate-100 italic">Obs: "${h.observacao}"</p>` : '';
                         levelSection.innerHTML += `
@@ -429,10 +422,6 @@
                                     ${obsHTML}
                                     <div class="flex justify-between items-center mt-2 pt-2 border-t border-slate-100/50">
                                         <div class="flex gap-2"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Cód: ${h.codigo}</span><span class="text-[9px] font-bold text-slate-400">Por: ${authorName.split(' ')[0]}</span></div>
-                                        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onclick='openSanctionModal(${JSON.stringify(h).replace(/'/g, "&#39;")})' class="p-1.5 text-slate-400 hover:text-fmm-blue hover:bg-white rounded-lg transition-all" title="Editar"><i data-lucide="edit-2" class="w-3.5 h-3.5"></i></button>
-                                            <button onclick="quickDeleteSanction('${h.id}')" class="p-1.5 text-slate-400 hover:text-red-500 hover:bg-white rounded-lg transition-all" title="Excluir"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                                        </div>
                                     </div>
                                 </div>
                             </div>`;
@@ -443,83 +432,55 @@
             lucide.createIcons();
         }
 
-        // RESTAURADO: Lógica de Alertas de Limite e Comunicados aos Pais
         async function checkAlerts() {
             const container = document.getElementById('parentAlertContainer');
             container.innerHTML = '';
             const { data: alerts } = await window.supabaseClient.from('sancoes_alertas').select('*').eq('ra_aluno', currentStudent.ra);
             if(alerts) alerts.forEach(a => { currentStudent.emailSent[a.nivel] = (a.status_email === 'enviado'); });
+            
             const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-            if(currentStudent.history) currentStudent.history.forEach(h => counts[h.level]++);
+            if(currentStudent.history) [1,2,3,4].forEach(l => counts[l] = getActiveCountByLevel(currentStudent.history, l));
+
             let hasAlert = false;
             for(let level=1; level<=4; level++) {
                 if (counts[level] >= 3) {
                     hasAlert = true;
                     const labels = { 1: 'Notificações', 2: 'Adv. Verbais', 3: 'Adv. Escritas', 4: 'Suspensões' };
-                    const isSent = currentStudent.emailSent[level];
-                    const html = `
+                    container.innerHTML += `
                     <div class="p-4 bg-red-50 border border-red-100 rounded-2xl flex flex-col gap-3 animate-fade-in-up">
                         <div class="flex items-start gap-3">
                             <div class="p-2 bg-red-100 rounded-full text-red-600"><i data-lucide="siren" class="w-5 h-5"></i></div>
-                            <div><h4 class="text-sm font-bold text-red-700">Limite de ${labels[level]} Atingido</h4><p class="text-xs text-red-600 mt-1 leading-relaxed">O aluno acumulou 3 ocorrências deste nível.</p></div>
-                        </div>
-                        <div class="flex items-center justify-between bg-white p-2 rounded-xl border border-red-100">
-                            <div class="flex items-center gap-2 pl-2 cursor-pointer" onclick="toggleEmailStatus(${level}, '${isSent ? 'pendente' : 'enviado'}')">
-                                <div class="w-2 h-2 rounded-full ${isSent ? 'bg-green-500' : 'bg-orange-400'}"></div>
-                                <span class="text-[10px] font-bold text-slate-500 uppercase">${isSent ? 'Enviado' : 'Pendente'}</span>
-                            </div>
-                            <button onclick="openEmailModal(${level})" class="text-[10px] font-bold text-fmm-blue hover:underline flex items-center gap-1 transition-colors"><i data-lucide="mail-plus" class="w-3 h-3"></i> Sugerir E-mail</button>
+                            <div><h4 class="text-sm font-bold text-red-700">Limite de ${labels[level]} Atingido</h4><p class="text-xs text-red-600 mt-1 leading-relaxed">Aguardando intervenção da Coordenação para escalonamento.</p></div>
                         </div>
                     </div>`;
-                    container.innerHTML += html;
                 }
             }
             if(hasAlert) { container.classList.remove('hidden'); lucide.createIcons(); } else container.classList.add('hidden');
         }
 
-        async function toggleEmailStatus(level, newStatus) {
-            await window.supabaseClient.from('sancoes_alertas').upsert({ ra_aluno: currentStudent.ra, nivel: level, status_email: newStatus, enviado_por: currentUser.id, data_envio: newStatus === 'enviado' ? new Date() : null }, { onConflict: 'ra_aluno, nivel' });
-            checkAlerts();
-        }
-
         async function openSanctionModal(existingSanction = null) {
-            let dataToLoad = {};
-            if (existingSanction) {
-                editingSanctionId = existingSanction.id;
-                dataToLoad = { level: existingSanction.nivel, date: existingSanction.data_sancao, reason: existingSanction.infracao, observacao: existingSanction.observacao, code: existingSanction.codigo };
-            } else editingSanctionId = null;
+            if (existingSanction) return; // Inspetor não edita sanções
             
-            const title = document.getElementById('modalSanctionTitle');
-            const btnDelete = document.getElementById('btnDeleteSanction');
+            const levelSelect = document.getElementById('sanctionLevel');
             const authorSelect = document.getElementById('sanctionAuthor');
+            const lockMessage = document.getElementById('lockMessage');
 
-            document.getElementById('sanctionLevel').value = '';
+            levelSelect.value = "1";
+            levelSelect.disabled = true; // Trava no nível 1 para Inspetor
+            lockMessage.classList.remove('hidden');
+            
             document.getElementById('sanctionDate').value = ManausTime.toISODate();
             document.getElementById('sanctionReason').value = '';
             document.getElementById('sanctionObs').value = '';
             authorSelect.innerHTML = `<option value="${currentUser.id}">${currentUser.nome_completo} (Eu)</option>`;
 
-            const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-            if(currentStudent.history) currentStudent.history.forEach(h => counts[h.level]++);
-
-            for(let i=1; i<=4; i++) {
+            // Desabilita opções superiores visualmente no select (apesar de estar travado)
+            for(let i=2; i<=4; i++) {
                 const opt = document.getElementById(`opt-lvl-${i}`);
-                opt.innerText = opt.innerText.replace(" (Bloqueado 3/3)", "");
-                const isEditingThisLevel = dataToLoad.level === i;
-                if (counts[i] >= 3 && !isEditingThisLevel) { opt.disabled = true; opt.innerText += " (Bloqueado 3/3)"; } else opt.disabled = false;
+                opt.disabled = true;
+                opt.innerText = opt.innerText.replace(" (Somente Coordenação)", "") + " (Somente Coordenação)";
             }
 
-            if(existingSanction) {
-                title.innerHTML = '<i data-lucide="edit" class="w-5 h-5 text-fmm-blue"></i> Editar Sanção';
-                btnDelete.classList.remove('hidden');
-                document.getElementById('sanctionLevel').value = dataToLoad.level;
-                document.getElementById('sanctionDate').value = dataToLoad.date;
-                document.getElementById('sanctionReason').value = dataToLoad.reason;
-                document.getElementById('sanctionObs').value = dataToLoad.observacao || '';
-            } else {
-                title.innerHTML = '<i data-lucide="file-warning" class="w-5 h-5 text-red-500"></i> Registar Sanção';
-                btnDelete.classList.add('hidden');
-            }
             document.getElementById('sanctionModal').classList.remove('hidden');
             lucide.createIcons();
         }
@@ -528,47 +489,24 @@
         function openNewSanctionModal() { openSanctionModal(); }
 
         async function saveSanction() {
-            const level = parseInt(document.getElementById('sanctionLevel').value);
             const reason = document.getElementById('sanctionReason').value;
             const date = document.getElementById('sanctionDate').value;
             const obs = document.getElementById('sanctionObs').value;
-            if(!level || !reason || !date) return alert("Preencha todos os campos obrigatórios.");
-            const payload = { ra_aluno: currentStudent.ra, id_autor: currentUser.id, nivel: level, infracao: reason, data_sancao: date, observacao: obs, codigo: editingSanctionId ? undefined : `${new Date().getFullYear()}/${Math.floor(Math.random() * 10000)}` };
-            if(!payload.codigo) delete payload.codigo;
-            let error;
-            if(editingSanctionId) ({ error } = await window.supabaseClient.from('sancoes_disciplinares').update(payload).eq('id', editingSanctionId));
-            else ({ error } = await window.supabaseClient.from('sancoes_disciplinares').insert(payload));
+            if(!reason || !date) return alert("Preencha todos os campos obrigatórios.");
+            
+            const payload = { 
+                ra_aluno: currentStudent.ra, 
+                id_autor: currentUser.id, 
+                nivel: 1, // Sempre Nível 1 para Inspetor
+                infracao: reason, 
+                data_sancao: date, 
+                observacao: obs, 
+                codigo: `${new Date().getFullYear()}/${Math.floor(Math.random() * 10000)}` 
+            };
+            
+            const { error } = await window.supabaseClient.from('sancoes_disciplinares').insert(payload);
             if(error) alert("Erro: " + error.message);
             else { closeSanctionModal(); await renderHistory(); await checkAlerts(); renderGrid(document.getElementById('studentSearch').value); }
-        }
-
-        async function deleteSanction() {
-            if(!confirm("Excluir esta sanção permanentemente?")) return;
-            const { error } = await window.supabaseClient.from('sancoes_disciplinares').delete().eq('id', editingSanctionId);
-            if(error) alert(error.message);
-            else { closeSanctionModal(); await renderHistory(); await checkAlerts(); renderGrid(document.getElementById('studentSearch').value); }
-        }
-
-        async function quickDeleteSanction(id) {
-            if(!confirm("Excluir esta sanção rapidamente?")) return;
-            const { error } = await window.supabaseClient.from('sancoes_disciplinares').delete().eq('id', id);
-            if(error) alert(error.message); else { await renderHistory(); await checkAlerts(); renderGrid(document.getElementById('studentSearch').value); }
-        }
-
-        async function openEmailModal(level) {
-            const labels = { 1: 'Notificações', 2: 'Advertências Verbais', 3: 'Advertências Escritas', 4: 'Suspensões' };
-            const nextLevel = level < 4 ? labels[level + 1] : "medidas extremas";
-            const listText = currentStudent.history.filter(h => h.level === level).map(s => `- ${ManausTime.format(s.date)}: ${s.reason}`).join('\n');
-            const body = `Prezados Responsáveis,\n\nInformamos que o aluno(a) ${currentStudent.nome_completo} (RA: ${currentStudent.ra}) atingiu o limite de 3 ${labels[level]} previstas no manual do aluno.\n\nHistórico de ocorrências deste nível:\n${listText}\n\nAlertamos que a reincidência levará à aplicação de ${nextLevel}.\n\nAtenciosamente,\nCoordenação Pedagógica FMM`;
-            document.getElementById('emailBody').value = body;
-            document.getElementById('emailModal').classList.remove('hidden');
-        }
-
-        function copyToClipboard() {
-            const copyText = document.getElementById("emailBody");
-            copyText.select();
-            document.execCommand("copy");
-            alert("Texto copiado!");
         }
 
         function openPhotoZoom() {
@@ -579,8 +517,6 @@
             modal.classList.remove('hidden');
         }
         function closePhotoZoom() { document.getElementById('photoModal').classList.add('hidden'); }
-        function toggleSidebar() { if(window.SidebarComponent) SidebarComponent.toggleSidebar(); }
-        async function logout() { if(confirm("Deseja sair do sistema?")) { await window.supabaseClient.auth.signOut(); window.location.href = "../../index.html"; } }
         window.onload = init;
     </script>
 </body>
